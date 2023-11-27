@@ -1,3 +1,4 @@
+//! Creating responses from [`HttpError`].
 use bytes::BufMut;
 use bytes::Bytes;
 use bytes::BytesMut;
@@ -53,6 +54,7 @@ impl<R> HttpErrorResponse<R> {
 }
 
 #[cfg(feature = "axum")]
+#[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
 impl<R> axum::response::IntoResponse for HttpErrorResponse<R>
 where
     R: Send + Sync + 'static,

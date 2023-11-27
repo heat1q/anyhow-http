@@ -1,4 +1,4 @@
-/// Construct an ad-hoc [`HttpError`] from a status code, optional source error and formatted reason.
+/// Construct an ad-hoc `HttpError` from a status code, optional source error and formatted reason.
 #[macro_export]
 macro_rules! http_error{
     ($status_code:ident $(, source = $src:ident)? $(, reason = $($arg:tt)*)?) => {{
@@ -22,7 +22,7 @@ macro_rules! http_error{
     }};
 }
 
-/// Shorthand macro to return early with a [`HttpError`].
+/// Shorthand macro to return early with a `HttpError`.
 #[macro_export]
 macro_rules! http_error_ret {
     ($status_code:ident $(, source = $src:ident)? $(, reason = $($arg:tt)*)?) => {
@@ -33,7 +33,7 @@ macro_rules! http_error_ret {
     };
 }
 
-/// Shorthand macro to map to a [`HttpError`] from any error within `.map_err()`.
+/// Shorthand macro to map to a `HttpError` from any error within `.map_err()`.
 #[macro_export]
 macro_rules! http_error_map_fn {
     ($status_code:ident $(, $($arg:tt)*)?) => {

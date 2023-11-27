@@ -22,4 +22,6 @@ default = []
 axum = ["dep:axum"]
 
 [dev-dependencies]
+axum = { version = "0.6", features = ["default"] }
+tokio = { version = "1.21", features = ["full"] }
 hyper = "0.14"

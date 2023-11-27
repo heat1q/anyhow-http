@@ -7,7 +7,7 @@ use http::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use crate::{HttpErrorResponse, IntoHttpErrorResponse};
+use crate::response::{HttpErrorResponse, IntoHttpErrorResponse};
 
 /// [`HttpError`] is an error that can be represented as a HTTP response. [`HttpError`] is generic over
 /// its response format, allowing consumers to implement their custom error response. See [`IntoHttpErrorResponse`].
@@ -170,6 +170,7 @@ where
 }
 
 #[cfg(feature = "axum")]
+#[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
 impl<R> axum::response::IntoResponse for HttpError<R>
 where
     R: IntoHttpErrorResponse<Fmt = R> + fmt::Debug + Send + Sync + 'static,
