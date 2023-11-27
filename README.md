@@ -10,10 +10,9 @@
 <img src="https://docs.rs/anyhow-http/badge.svg" />
 </a>
 <br/>
+<br/>
 
-`anyhow-http` offers customizable HTTP errors built on [`anyhow`](https://docs.rs/prometheus/latest/prometheus/) errors.
-
-This crates acts as a superset of [`anyhow`](https://docs.rs/prometheus/latest/prometheus/), extending the functionality to define custom HTTP error responses.
+`anyhow-http` offers customizable HTTP errors built on [`anyhow`](https://docs.rs/prometheus/latest/prometheus/) errors. This crates acts as a superset of [`anyhow`](https://docs.rs/prometheus/latest/prometheus/), extending the functionality to define custom HTTP error responses.
 
 ## Example 
 ```rust
