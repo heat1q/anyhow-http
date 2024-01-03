@@ -11,18 +11,18 @@ keywords = ["error", "http"]
 [dependencies]
 anyhow = "1.0"
 bytes = "1.5"
-http = "0.2"
+http = "1.0"
 mime = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-axum = { version = "0.6", default-features = false, optional = true }
+axum = { version = "0.7", default-features = false, optional = true }
 
 [features]
 default = []
 axum = ["dep:axum"]
 
 [dev-dependencies]
-axum = { version = "0.6", features = ["default"] }
+axum = { version = "0.7", features = ["default"] }
 tokio = { version = "1.21", features = ["full"] }
-hyper = "0.14"
+hyper = "1.0"

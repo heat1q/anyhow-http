@@ -13,6 +13,7 @@ pub type Result<T> = core::result::Result<T, HttpError<Json>>;
 
 /// Type representing an error response.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct HttpErrorResponse<R> {
     pub(crate) http_error: HttpError<R>,
     pub(crate) body: Bytes,
@@ -69,7 +70,8 @@ where
             self.body,
         )
             .into_response();
-        resp.extensions_mut().insert(self.http_error);
+        resp.extensions_mut()
+            .insert(std::sync::Arc::new(self.http_error));
         resp
     }
 }
@@ -111,7 +113,6 @@ impl IntoHttpErrorResponse for Json {
 
 #[cfg(test)]
 mod tests {
-    use axum::response::IntoResponse;
     use http::StatusCode;
 
     use crate::http_error;
@@ -128,7 +129,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "axum")]
     fn http_error_resonse_axum_into_response() {
+        use axum::response::IntoResponse;
         let resp: HttpErrorResponse<()> =
             HttpErrorResponse::json(http_error!(BAD_REQUEST), serde_json::Value::Array(vec![]));
         let resp = resp.into_response();

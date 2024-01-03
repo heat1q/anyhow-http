@@ -17,7 +17,7 @@ pub struct HttpError<R> {
     pub reason: Option<String>,
     pub source: Option<anyhow::Error>,
     pub data: HashMap<String, serde_json::Value>,
-    resp_formatter: PhantomData<R>,
+    _formatter: PhantomData<R>,
 }
 
 impl<R> fmt::Display for HttpError<R> {
@@ -39,7 +39,7 @@ impl<R> Default for HttpError<R> {
             source: None,
             data: HashMap::default(),
             #[allow(clippy::default_constructed_unit_structs)]
-            resp_formatter: PhantomData::default(),
+            _formatter: PhantomData::default(),
         }
     }
 }
