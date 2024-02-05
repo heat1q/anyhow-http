@@ -241,6 +241,25 @@ mod tests {
     }
 
     #[test]
+    fn http_error_from_custom_impl_try() {
+        struct GenericError;
+        impl<R> From<GenericError> for HttpError<R>
+        where
+            R: fmt::Debug + Sync + Send + 'static,
+        {
+            fn from(_: GenericError) -> Self {
+                Self::default().with_status_code(StatusCode::BAD_REQUEST)
+            }
+        }
+
+        let e: std::result::Result<(), HttpError<()>> = (|| {
+            Err(GenericError)?;
+            unreachable!()
+        })();
+        assert_eq!(e.unwrap_err().status_code, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
     fn http_error_with_status_code() {
         let e: HttpError<()> = HttpError::default().with_status_code(StatusCode::BAD_REQUEST);
         assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
