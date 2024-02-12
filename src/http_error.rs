@@ -1,7 +1,7 @@
 use core::fmt;
 use fmt::Debug;
-use std::collections::HashMap;
 use std::marker::PhantomData;
+use std::{borrow::Cow, collections::HashMap};
 
 use http::StatusCode;
 use serde::de::DeserializeOwned;
@@ -13,10 +13,10 @@ use crate::response::{HttpErrorResponse, IntoHttpErrorResponse};
 /// its response format, allowing consumers to implement their custom error response. See [`IntoHttpErrorResponse`].
 #[derive(Debug)]
 pub struct HttpError<R> {
-    pub status_code: StatusCode,
-    pub reason: Option<String>,
-    pub source: Option<anyhow::Error>,
-    pub data: HashMap<String, serde_json::Value>,
+    pub(crate) status_code: StatusCode,
+    pub(crate) reason: Option<Cow<'static, str>>,
+    pub(crate) source: Option<anyhow::Error>,
+    pub(crate) data: Option<HashMap<String, serde_json::Value>>,
     _formatter: PhantomData<R>,
 }
 
@@ -33,14 +33,7 @@ impl<R> fmt::Display for HttpError<R> {
 
 impl<R> Default for HttpError<R> {
     fn default() -> Self {
-        Self {
-            status_code: StatusCode::INTERNAL_SERVER_ERROR,
-            reason: None,
-            source: None,
-            data: HashMap::default(),
-            #[allow(clippy::default_constructed_unit_structs)]
-            _formatter: PhantomData::default(),
-        }
+        Self { ..Self::new() }
     }
 }
 
@@ -59,16 +52,42 @@ impl std::error::Error for DynErrorWrapper {
     }
 }
 
-impl<R> HttpError<R>
-where
-    R: fmt::Debug + Sync + Send + 'static,
-{
-    /// Creates a [`HttpError`] from a status code.
-    pub fn from_status_code(status_code: StatusCode) -> Self {
+impl<R> HttpError<R> {
+    /// Creates an empty [`HttpError`] with status 500.
+    pub const fn new() -> Self {
+        Self {
+            status_code: StatusCode::INTERNAL_SERVER_ERROR,
+            reason: None,
+            source: None,
+            data: None,
+            _formatter: PhantomData,
+        }
+    }
+
+    /// Creates a [`HttpError`] with status code and reason. This constructor can be evaluated at
+    /// compile time.
+    ///
+    /// ```rust
+    /// use anyhow_http::HttpError;
+    ///
+    /// const BAD_REQUEST: HttpError<()> =
+    ///     HttpError::from_static(http::StatusCode::BAD_REQUEST, "invalid request");
+    /// ```
+    pub const fn from_static(status_code: StatusCode, reason: &'static str) -> Self {
         Self {
             status_code,
-            ..Default::default()
+            reason: Some(Cow::Borrowed(reason)),
+            source: None,
+            data: None,
+            _formatter: PhantomData,
         }
+    }
+
+    /// Creates a [`HttpError`] from a status code.
+    pub const fn from_status_code(status_code: StatusCode) -> Self {
+        let mut http_err = Self::new();
+        http_err.status_code = status_code;
+        http_err
     }
 
     /// Creates a [`HttpError`] from another [`HttpError`]. This is mostly used to convert between
@@ -78,36 +97,20 @@ where
             status_code: http_err.status_code,
             reason: http_err.reason,
             source: http_err.source,
-            ..Self::default()
-        }
-    }
-
-    /// Creates a [`HttpError`] from a generic error. It attempts to downcast to an underlying
-    /// [`HttpError`].
-    pub fn from_err<E>(err: E) -> Self
-    where
-        E: Into<anyhow::Error>,
-    {
-        let err = err.into();
-        // TODO: bridge from HttpError to anyhow::Error first
-        match err.downcast::<HttpError<R>>() {
-            Ok(http_error) => http_error,
-            Err(err) => Self {
-                source: Some(err),
-                ..Self::default()
-            },
+            data: http_err.data,
+            _formatter: PhantomData,
         }
     }
 
     /// Sets the status code.
-    pub fn with_status_code(mut self, status_code: StatusCode) -> Self {
+    pub const fn with_status_code(mut self, status_code: StatusCode) -> Self {
         self.status_code = status_code;
         self
     }
 
     /// Sets the error reason.
-    pub fn with_reason<S: ToString>(mut self, reason: S) -> Self {
-        self.reason = Some(reason.to_string());
+    pub fn with_reason<S: Into<Cow<'static, str>>>(mut self, reason: S) -> Self {
+        self.reason = Some(reason.into());
         self
     }
 
@@ -134,7 +137,9 @@ where
     where
         V: Serialize + Send + Sync,
     {
-        self.data.insert(key.into(), serde_json::to_value(value)?);
+        self.data
+            .get_or_insert_with(HashMap::new)
+            .insert(key.into(), serde_json::to_value(value)?);
         Ok(())
     }
 
@@ -144,8 +149,46 @@ where
         V: DeserializeOwned + Send + Sync,
     {
         self.data
-            .get(key.as_ref())
+            .as_ref()
+            .and_then(|d| d.get(key.as_ref()))
             .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    /// Returns the status code.
+    pub fn status_code(&self) -> StatusCode {
+        self.status_code
+    }
+
+    /// Returns the error reason if any.
+    pub fn reason(&self) -> Option<Cow<'static, str>> {
+        self.reason.clone()
+    }
+
+    /// Returns the source error if any.
+    pub fn source(&self) -> Option<&anyhow::Error> {
+        self.source.as_ref()
+    }
+}
+
+impl<R> HttpError<R>
+where
+    R: fmt::Debug + Sync + Send + 'static,
+{
+    /// Creates a [`HttpError`] from a generic error. It attempts to downcast to an underlying
+    /// [`HttpError`].
+    pub fn from_err<E>(err: E) -> Self
+    where
+        E: Into<anyhow::Error>,
+    {
+        let err = err.into();
+        // TODO: bridge from HttpError to anyhow::Error first
+        match err.downcast::<HttpError<R>>() {
+            Ok(http_error) => http_error,
+            Err(err) => Self {
+                source: Some(err),
+                ..Self::default()
+            },
+        }
     }
 }
 
@@ -213,15 +256,29 @@ mod tests {
     }
 
     #[test]
+    fn http_error_new_const() {
+        const ERR: HttpError<()> = HttpError::new();
+        assert_eq!(ERR.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn http_error_from_static() {
+        const ERR: HttpError<()> =
+            HttpError::from_static(StatusCode::BAD_REQUEST, "invalid request");
+        assert_eq!(ERR.status_code(), StatusCode::BAD_REQUEST);
+        assert_eq!(ERR.reason(), Some("invalid request".into()));
+    }
+
+    #[test]
     fn http_error_default() {
         let e: HttpError<()> = HttpError::default();
-        assert_eq!(e.status_code, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(e.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
     #[test]
     fn http_error_from_status_code() {
         let e: HttpError<()> = HttpError::from_status_code(StatusCode::BAD_REQUEST);
-        assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
+        assert_eq!(e.status_code(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
@@ -232,12 +289,12 @@ mod tests {
     #[test]
     fn http_error_from_err() {
         let e: HttpError<()> = HttpError::from_err(anyhow!("error"));
-        assert_eq!(e.status_code, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(e.source.unwrap().to_string(), "error");
+        assert_eq!(e.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(e.source().unwrap().to_string(), "error");
 
         let e: HttpError<()> = HttpError::from_err(fmt::Error);
-        assert_eq!(e.status_code, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(e.source.unwrap().to_string(), fmt::Error.to_string());
+        assert_eq!(e.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(e.source().unwrap().to_string(), fmt::Error.to_string());
     }
 
     #[test]
@@ -256,32 +313,32 @@ mod tests {
             Err(GenericError)?;
             unreachable!()
         })();
-        assert_eq!(e.unwrap_err().status_code, StatusCode::BAD_REQUEST);
+        assert_eq!(e.unwrap_err().status_code(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn http_error_with_status_code() {
         let e: HttpError<()> = HttpError::default().with_status_code(StatusCode::BAD_REQUEST);
-        assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
+        assert_eq!(e.status_code(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn http_error_with_reason() {
         let e: HttpError<()> = HttpError::default().with_reason("reason");
-        assert_eq!(e.reason, Some("reason".to_string()));
+        assert_eq!(e.reason(), Some("reason".into()));
     }
 
     #[test]
     fn http_error_with_dyn_source_error() {
         let dyn_err = Box::new(fmt::Error) as Box<dyn std::error::Error + Send + Sync + 'static>;
         let e: HttpError<()> = HttpError::default().with_dyn_source_err(dyn_err);
-        assert_eq!(e.source.unwrap().to_string(), fmt::Error.to_string());
+        assert_eq!(e.source().unwrap().to_string(), fmt::Error.to_string());
     }
 
     #[test]
     fn http_error_with_source_error() {
         let e: HttpError<()> = HttpError::default().with_source_err(fmt::Error);
-        assert_eq!(e.source.unwrap().to_string(), fmt::Error.to_string());
+        assert_eq!(e.source().unwrap().to_string(), fmt::Error.to_string());
     }
 
     #[test]

@@ -63,7 +63,7 @@ mod tests {
     fn http_error_only_reason() {
         let e: HttpError<()> = http_error!(BAD_REQUEST, "error {}", 1);
         assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
-        assert_eq!(e.reason, Some("error 1".to_string()));
+        assert_eq!(e.reason, Some("error 1".into()));
     }
 
     #[test]
@@ -80,6 +80,6 @@ mod tests {
         let e: HttpError<()> = http_error!(BAD_REQUEST, source = source, reason = "error {}", 1);
         assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
         assert!(e.source.is_some());
-        assert_eq!(e.reason, Some("error 1".to_string()));
+        assert_eq!(e.reason, Some("error 1".into()));
     }
 }

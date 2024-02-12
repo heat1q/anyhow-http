@@ -95,16 +95,18 @@ impl IntoHttpErrorResponse for Json {
 
     fn into_http_error_response(http_error: HttpError<Self::Fmt>) -> HttpErrorResponse<Self::Fmt> {
         let error_reason = http_error
-            .reason
+            .reason()
             .as_deref()
-            .or_else(|| http_error.status_code.canonical_reason())
+            .or_else(|| http_error.status_code().canonical_reason())
             .map(String::from);
 
         let mut resp = json!({
             "error": error_reason,
         });
-        for (k, v) in &http_error.data {
-            resp[k] = v.clone();
+        if let Some(data) = &http_error.data {
+            for (k, v) in data {
+                resp[k] = v.clone();
+            }
         }
 
         HttpErrorResponse::json(http_error, resp)
