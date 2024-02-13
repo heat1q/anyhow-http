@@ -1,11 +1,11 @@
 use core::fmt;
 use fmt::Debug;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::marker::PhantomData;
 use std::{borrow::Cow, collections::HashMap};
 
 use http::StatusCode;
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 
 use crate::response::{HttpErrorResponse, IntoHttpErrorResponse};
 
@@ -132,10 +132,42 @@ impl<R> HttpError<R> {
         self
     }
 
-    /// Adds a key-pair value to the inner data.
-    pub fn add<V>(&mut self, key: impl Into<String>, value: V) -> serde_json::Result<()>
+    /// Append to to the inner data based on one or more key-value pairs.
+    ///
+    /// ```rust
+    /// use anyhow_http::HttpError;
+    ///
+    /// let err: HttpError<()> = HttpError::default()
+    ///     .with_data([("key1", 1234), ("key2", 5678)])
+    ///     .unwrap();
+    /// ```
+    pub fn with_data<I, K, V>(mut self, values: I) -> Option<Self>
     where
-        V: Serialize + Send + Sync,
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Serialize + Sync + Send + 'static,
+    {
+        let iter = values
+            .into_iter()
+            .map(|(k, v)| Some((k.into(), serde_json::to_value(v).ok()?)));
+
+        self.data = self
+            .data
+            .get_or_insert_with(HashMap::new)
+            .clone()
+            .into_iter()
+            .map(Option::Some)
+            .chain(iter)
+            .collect();
+
+        Some(self)
+    }
+
+    /// Adds a key-pair value to the inner data.
+    pub fn add<K, V>(&mut self, key: K, value: V) -> serde_json::Result<()>
+    where
+        K: Into<String>,
+        V: Serialize + Sync + Send + 'static,
     {
         self.data
             .get_or_insert_with(HashMap::new)
@@ -347,5 +379,14 @@ mod tests {
         e.add("key", 1234).unwrap();
         assert_eq!(e.get::<i32>("key"), Some(1234));
         assert_eq!(e.get::<String>("key"), None);
+    }
+
+    #[test]
+    fn http_error_with_data() {
+        let e: HttpError<()> = HttpError::default()
+            .with_data([("key1", 1234), ("key2", 5678)])
+            .unwrap();
+        assert_eq!(e.get::<i32>("key1"), Some(1234));
+        assert_eq!(e.get::<i32>("key2"), Some(5678));
     }
 }
