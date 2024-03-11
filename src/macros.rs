@@ -1,6 +1,9 @@
 /// Construct an ad-hoc `HttpError` from a status code, optional source error and formatted reason.
 #[macro_export]
 macro_rules! http_error{
+    ($status_code:ident, $reason:literal) => {
+       $crate::HttpError::from_static($crate::http::StatusCode::$status_code, $reason)
+    };
     ($status_code:ident $(, source = $src:ident)? $(, reason = $($arg:tt)*)?) => {{
         let http_error: $crate::HttpError<_>
             = $crate::HttpError::from_status_code($crate::http::StatusCode::$status_code)
@@ -30,20 +33,6 @@ macro_rules! http_error_ret {
     };
     ($status_code:ident $(, $($arg:tt)*)?) => {
         return Err($crate::http_error!($status_code $(, $($arg)*)?).into())
-    };
-}
-
-/// Shorthand macro to map to a `HttpError` from any error within `.map_err()`.
-#[macro_export]
-macro_rules! http_error_map_fn {
-    ($status_code:ident $(, $($arg:tt)*)?) => {
-        |e| -> $crate::HttpError<_> {
-            #[allow(clippy::useless_conversion)]
-            HttpError::from(e).with_status_code($crate::http::StatusCode::$status_code)
-            $(
-                .with_reason(std::format!($($arg)*))
-             )?
-        }
     };
 }
 
@@ -81,5 +70,12 @@ mod tests {
         assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
         assert!(e.source.is_some());
         assert_eq!(e.reason, Some("error 1".into()));
+    }
+
+    #[test]
+    fn http_error_const() {
+        const ERR: HttpError<()> = http_error!(BAD_REQUEST, "error");
+        assert_eq!(ERR.status_code, StatusCode::BAD_REQUEST);
+        assert_eq!(ERR.reason, Some("error".into()));
     }
 }

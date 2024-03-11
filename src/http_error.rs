@@ -37,6 +37,14 @@ impl<R> Default for HttpError<R> {
     }
 }
 
+impl<R> PartialEq for HttpError<R> {
+    fn eq(&self, other: &Self) -> bool {
+        self.status_code == other.status_code
+            && self.reason == other.reason
+            && self.data == other.data
+    }
+}
+
 #[derive(Debug)]
 struct DynErrorWrapper(Box<dyn std::error::Error + Send + Sync + 'static>);
 

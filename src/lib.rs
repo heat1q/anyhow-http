@@ -33,7 +33,10 @@
 //! }
 //! ```
 
+mod extension;
 mod http_error;
+
+pub use extension::*;
 pub use http_error::*;
 
 #[doc(hidden)]
