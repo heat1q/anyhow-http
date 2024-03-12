@@ -4,7 +4,7 @@ description = "Customizable HTTP errors built on anyhow"
 documentation = "https://docs.rs/anyhow-http"
 repository = "https://github.com/heat1q/anyhow-http"
 license = "MIT"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 keywords = ["error", "http"]
 
