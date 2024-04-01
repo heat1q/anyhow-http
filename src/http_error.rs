@@ -1,8 +1,12 @@
+use anyhow::anyhow;
 use core::fmt;
 use fmt::Debug;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::error::Error as StdError;
+use std::fmt::Display;
 use std::marker::PhantomData;
+use std::ops::Deref;
 use std::{borrow::Cow, collections::HashMap};
 
 use http::StatusCode;
@@ -42,21 +46,6 @@ impl<R> PartialEq for HttpError<R> {
         self.status_code == other.status_code
             && self.reason == other.reason
             && self.data == other.data
-    }
-}
-
-#[derive(Debug)]
-struct DynErrorWrapper(Box<dyn std::error::Error + Send + Sync + 'static>);
-
-impl fmt::Display for DynErrorWrapper {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl std::error::Error for DynErrorWrapper {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&*self.0)
     }
 }
 
@@ -123,11 +112,8 @@ impl<R> HttpError<R> {
     }
 
     /// Set the source error from a generic error trait object.
-    pub fn with_dyn_source_err(
-        mut self,
-        err: Box<dyn std::error::Error + Send + Sync + 'static>,
-    ) -> Self {
-        self.source = Some(DynErrorWrapper(err).into());
+    pub fn with_boxed_source_err(mut self, err: Box<dyn StdError + Send + Sync + 'static>) -> Self {
+        self.source = Some(anyhow!("{err}"));
         self
     }
 
@@ -230,6 +216,10 @@ where
             },
         }
     }
+
+    pub fn into_boxed(self) -> Box<dyn StdError + Send + Sync + 'static> {
+        BoxedHttpError::from_http_error(self).into()
+    }
 }
 
 impl<R> HttpError<R>
@@ -249,6 +239,43 @@ where
 {
     fn from(err: E) -> Self {
         HttpError::from_err(err)
+    }
+}
+
+#[derive(Debug)]
+struct BoxedHttpError<R> {
+    http_err: HttpError<R>,
+    source: Option<Box<dyn StdError + Send + Sync + 'static>>,
+}
+
+impl<R> BoxedHttpError<R> {
+    fn from_http_error(mut http_err: HttpError<R>) -> Self {
+        let source = http_err.source.take().map(Into::into);
+        Self { http_err, source }
+    }
+}
+
+impl<R> Display for BoxedHttpError<R> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.http_err.fmt(f)
+    }
+}
+
+impl<R> StdError for BoxedHttpError<R>
+where
+    R: Debug + Send + Sync + 'static,
+{
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.source.as_ref().map(|e| e.deref() as &(dyn StdError))
+    }
+}
+
+impl<R> From<HttpError<R>> for Box<dyn StdError + Send + Sync + 'static>
+where
+    R: Debug + Send + Sync + 'static,
+{
+    fn from(http_err: HttpError<R>) -> Self {
+        http_err.into_boxed()
     }
 }
 
@@ -370,8 +397,8 @@ mod tests {
 
     #[test]
     fn http_error_with_dyn_source_error() {
-        let dyn_err = Box::new(fmt::Error) as Box<dyn std::error::Error + Send + Sync + 'static>;
-        let e: HttpError<()> = HttpError::default().with_dyn_source_err(dyn_err);
+        let dyn_err = Box::new(fmt::Error) as Box<dyn StdError + Send + Sync + 'static>;
+        let e: HttpError<()> = HttpError::default().with_boxed_source_err(dyn_err);
         assert_eq!(e.source().unwrap().to_string(), fmt::Error.to_string());
     }
 
@@ -396,5 +423,16 @@ mod tests {
             .unwrap();
         assert_eq!(e.get::<i32>("key1"), Some(1234));
         assert_eq!(e.get::<i32>("key2"), Some(5678));
+    }
+
+    #[test]
+    fn http_error_into_boxed() {
+        let http_err: HttpError<()> = HttpError::default().with_source_err(anyhow!("an error"));
+        let boxed = http_err.into_boxed();
+        assert_eq!(boxed.to_string(), "http error 500 Internal Server Error");
+        assert_eq!(
+            boxed.source().map(|e| e.to_string()),
+            Some("an error".into())
+        );
     }
 }
