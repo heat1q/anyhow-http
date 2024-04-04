@@ -1,10 +1,11 @@
+use core::fmt;
 use http::StatusCode;
 use std::{borrow::Cow, result::Result as StdResult};
 
 use crate::HttpError;
 
 /// Extension trait to map the error variant of a [`Result`] to a [`HttpError`].
-pub trait ResultExt<R> {
+pub trait ResultExt<R: fmt::Debug> {
     type Item;
 
     /// Maps a `Result<T, E>` to `Result<T, HttpError<R>>` by creating a [`HttpError`] with the
@@ -48,7 +49,7 @@ pub trait ResultExt<R> {
 
 impl<E, R, T> ResultExt<R> for StdResult<T, E>
 where
-    E: Into<HttpError<R>> + Send + Sync + 'static,
+    E: Into<anyhow::Error> + Send + Sync + 'static,
     R: std::fmt::Debug + Send + Sync + 'static,
 {
     type Item = T;
@@ -56,7 +57,7 @@ where
     fn map_status(self, status_code: StatusCode) -> StdResult<T, HttpError<R>> {
         match self {
             Ok(v) => Ok(v),
-            Err(e) => Err(E::into(e).with_status_code(status_code)),
+            Err(e) => Err(HttpError::from_err(e).with_status_code(status_code)),
         }
     }
 
@@ -70,7 +71,7 @@ where
     {
         match self {
             Ok(v) => Ok(v),
-            Err(e) => Err(E::into(e)
+            Err(e) => Err(HttpError::from_err(e)
                 .with_status_code(status_code)
                 .with_reason(reason.into())),
         }
@@ -78,7 +79,7 @@ where
 }
 
 /// Extension trait to transform an [`Option`] to a [`HttpError`].
-pub trait OptionExt<R> {
+pub trait OptionExt<R: fmt::Debug> {
     type Item;
 
     /// Transforms the `Option<T>` into a `Result<T, HttpError<R>>`, mapping `Some(v)` to

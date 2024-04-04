@@ -46,3 +46,10 @@ async fn handler() -> Result<impl IntoResponse> {
 
 ## License
 Licensed under [MIT](https://github.com/heat1q/anyhow-http/blob/master/LICENSE).
+
+
+
+
+* create http error anywhere which should be persisted -> custom Result<_, HttpError<_>>
+* any error should be easily converted to HttpError -> impl From<StdError> for HttpError
+* 

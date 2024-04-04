@@ -14,13 +14,13 @@ pub type Result<T> = core::result::Result<T, HttpError<Json>>;
 /// Type representing an error response.
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct HttpErrorResponse<R> {
+pub struct HttpErrorResponse<R: fmt::Debug> {
     pub(crate) http_error: HttpError<R>,
     pub(crate) body: Bytes,
     pub(crate) content_type: mime::Mime,
 }
 
-impl<R> HttpErrorResponse<R> {
+impl<R: fmt::Debug> HttpErrorResponse<R> {
     /// Constructs a plain text error response for the given [`HttpError`].
     pub fn plain(http_error: HttpError<R>, body: impl Into<Bytes>) -> Self {
         HttpErrorResponse {
@@ -58,7 +58,7 @@ impl<R> HttpErrorResponse<R> {
 #[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
 impl<R> axum::response::IntoResponse for HttpErrorResponse<R>
 where
-    R: Send + Sync + 'static,
+    R: fmt::Debug + Send + Sync + 'static,
 {
     fn into_response(self) -> axum::response::Response {
         let mut resp = (
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn http_error_json_response() {
-        let mut e: HttpError<Json> = http_error!(BAD_REQUEST, "invalid param");
+        let mut e: HttpError<Json> = http_error!(BAD_REQUEST, "invalid param",);
         e.add("ctx", "some context").unwrap();
         e.add("code", 1234).unwrap();
         let resp = e.into_http_error_response();

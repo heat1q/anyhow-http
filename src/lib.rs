@@ -45,3 +45,9 @@ pub mod macros;
 pub mod response;
 
 pub use http;
+
+// Not public API.
+#[doc(hidden)]
+pub mod __private {
+    pub use crate::macros::BridgeError;
+}

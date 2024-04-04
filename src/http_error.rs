@@ -4,9 +4,7 @@ use fmt::Debug;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::error::Error as StdError;
-use std::fmt::Display;
 use std::marker::PhantomData;
-use std::ops::Deref;
 use std::{borrow::Cow, collections::HashMap};
 
 use http::StatusCode;
@@ -16,7 +14,7 @@ use crate::response::{HttpErrorResponse, IntoHttpErrorResponse};
 /// [`HttpError`] is an error that can be represented as a HTTP response. [`HttpError`] is generic over
 /// its response format, allowing consumers to implement their custom error response. See [`IntoHttpErrorResponse`].
 #[derive(Debug)]
-pub struct HttpError<R> {
+pub struct HttpError<R: fmt::Debug = ()> {
     pub(crate) status_code: StatusCode,
     pub(crate) reason: Option<Cow<'static, str>>,
     pub(crate) source: Option<anyhow::Error>,
@@ -24,7 +22,7 @@ pub struct HttpError<R> {
     _formatter: PhantomData<R>,
 }
 
-impl<R> fmt::Display for HttpError<R> {
+impl<R: fmt::Debug> fmt::Display for HttpError<R> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (&self.reason, &self.source) {
             (None, None) => write!(f, "http error {}", self.status_code),
@@ -35,13 +33,21 @@ impl<R> fmt::Display for HttpError<R> {
     }
 }
 
-impl<R> Default for HttpError<R> {
+impl<R: fmt::Debug> StdError for HttpError<R> {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        self.source
+            .as_deref()
+            .map(|e| e as &(dyn StdError + 'static))
+    }
+}
+
+impl<R: fmt::Debug> Default for HttpError<R> {
     fn default() -> Self {
         Self { ..Self::new() }
     }
 }
 
-impl<R> PartialEq for HttpError<R> {
+impl<R: fmt::Debug> PartialEq for HttpError<R> {
     fn eq(&self, other: &Self) -> bool {
         self.status_code == other.status_code
             && self.reason == other.reason
@@ -49,7 +55,7 @@ impl<R> PartialEq for HttpError<R> {
     }
 }
 
-impl<R> HttpError<R> {
+impl<R: fmt::Debug> HttpError<R> {
     /// Creates an empty [`HttpError`] with status 500.
     pub const fn new() -> Self {
         Self {
@@ -89,7 +95,7 @@ impl<R> HttpError<R> {
 
     /// Creates a [`HttpError`] from another [`HttpError`]. This is mostly used to convert between
     /// [`HttpError`]s with different response formats.
-    pub fn from_http_err<S>(http_err: HttpError<S>) -> Self {
+    pub fn from_http_err<S: fmt::Debug>(http_err: HttpError<S>) -> Self {
         Self {
             status_code: http_err.status_code,
             reason: http_err.reason,
@@ -218,7 +224,8 @@ where
     }
 
     pub fn into_boxed(self) -> Box<dyn StdError + Send + Sync + 'static> {
-        BoxedHttpError::from_http_error(self).into()
+        //BoxedHttpError::from_http_error(self).into()
+        self.into()
     }
 }
 
@@ -232,50 +239,12 @@ where
     }
 }
 
-impl<E, R> From<E> for HttpError<R>
+impl<R> From<anyhow::Error> for HttpError<R>
 where
-    E: Into<anyhow::Error>,
-    R: fmt::Debug + Sync + Send + 'static,
+    R: fmt::Debug + Send + Sync + 'static,
 {
-    fn from(err: E) -> Self {
+    fn from(err: anyhow::Error) -> Self {
         HttpError::from_err(err)
-    }
-}
-
-#[derive(Debug)]
-struct BoxedHttpError<R> {
-    http_err: HttpError<R>,
-    source: Option<Box<dyn StdError + Send + Sync + 'static>>,
-}
-
-impl<R> BoxedHttpError<R> {
-    fn from_http_error(mut http_err: HttpError<R>) -> Self {
-        let source = http_err.source.take().map(Into::into);
-        Self { http_err, source }
-    }
-}
-
-impl<R> Display for BoxedHttpError<R> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.http_err.fmt(f)
-    }
-}
-
-impl<R> StdError for BoxedHttpError<R>
-where
-    R: Debug + Send + Sync + 'static,
-{
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        self.source.as_ref().map(|e| e.deref() as &(dyn StdError))
-    }
-}
-
-impl<R> From<HttpError<R>> for Box<dyn StdError + Send + Sync + 'static>
-where
-    R: Debug + Send + Sync + 'static,
-{
-    fn from(http_err: HttpError<R>) -> Self {
-        http_err.into_boxed()
     }
 }
 
@@ -366,7 +335,14 @@ mod tests {
 
     #[test]
     fn http_error_from_custom_impl_try() {
+        #[derive(Debug)]
         struct GenericError;
+        impl std::fmt::Display for GenericError {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "CustomError")
+            }
+        }
+        impl StdError for GenericError {}
         impl<R> From<GenericError> for HttpError<R>
         where
             R: fmt::Debug + Sync + Send + 'static,
@@ -376,11 +352,12 @@ mod tests {
             }
         }
 
-        let e: std::result::Result<(), HttpError<()>> = (|| {
+        let res: std::result::Result<(), HttpError<()>> = (|| {
             Err(GenericError)?;
             unreachable!()
         })();
-        assert_eq!(e.unwrap_err().status_code(), StatusCode::BAD_REQUEST);
+        let e = res.unwrap_err();
+        assert_eq!(e.status_code(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
@@ -426,13 +403,10 @@ mod tests {
     }
 
     #[test]
-    fn http_error_into_boxed() {
-        let http_err: HttpError<()> = HttpError::default().with_source_err(anyhow!("an error"));
-        let boxed = http_err.into_boxed();
-        assert_eq!(boxed.to_string(), "http error 500 Internal Server Error");
-        assert_eq!(
-            boxed.source().map(|e| e.to_string()),
-            Some("an error".into())
-        );
+    fn http_error_anyhow_downcast() {
+        let outer: anyhow::Error =
+            HttpError::<()>::from_status_code(StatusCode::BAD_REQUEST).into();
+        let e = HttpError::<()>::from(outer);
+        assert_eq!(e.status_code(), StatusCode::BAD_REQUEST);
     }
 }
