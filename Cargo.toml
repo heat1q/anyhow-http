@@ -21,6 +21,7 @@ axum = { version = "0.7", default-features = false, optional = true }
 [features]
 default = []
 axum = ["dep:axum"]
+json = []
 
 [dev-dependencies]
 axum = { version = "0.7", features = ["default"] }

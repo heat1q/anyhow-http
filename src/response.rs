@@ -2,72 +2,45 @@
 use bytes::BufMut;
 use bytes::Bytes;
 use bytes::BytesMut;
-use serde::Serialize;
 use serde_json::json;
-use std::fmt;
+use std::marker::PhantomData;
 
 use crate::http_error::HttpError;
 
-/// A result that wraps [`HttpError`].
-pub type Result<T> = core::result::Result<T, HttpError<Json>>;
+/// A result that wraps [`HttpError`] with response formatter [`FormatResponse`].
+pub type HttpResult<T, F> = core::result::Result<T, HttpErrorResponse<F>>;
 
 /// Type representing an error response.
 #[derive(Debug)]
-#[allow(dead_code)]
-pub struct HttpErrorResponse<R: fmt::Debug> {
-    pub(crate) http_error: HttpError<R>,
-    pub(crate) body: Bytes,
-    pub(crate) content_type: mime::Mime,
+pub struct HttpErrorResponse<F: FormatResponse> {
+    pub(crate) http_error: HttpError,
+    _formatter: PhantomData<F>,
 }
 
-impl<R: fmt::Debug> HttpErrorResponse<R> {
-    /// Constructs a plain text error response for the given [`HttpError`].
-    pub fn plain(http_error: HttpError<R>, body: impl Into<Bytes>) -> Self {
-        HttpErrorResponse {
-            http_error,
-            body: body.into(),
-            content_type: mime::TEXT_PLAIN,
-        }
-    }
-
-    /// Constructs a Json error response for the given [`HttpError`].
-    pub fn json(http_error: HttpError<R>, body: impl Serialize) -> Self {
-        let mut buf = BytesMut::with_capacity(128).writer();
-        if let Err(err) = serde_json::to_writer(&mut buf, &body) {
-            return Self::plain(http_error, err.to_string());
-        }
-
-        HttpErrorResponse {
-            http_error,
-            body: buf.into_inner().freeze(),
-            content_type: mime::APPLICATION_JSON,
-        }
-    }
-
-    /// Constructs a Html error response for the given [`HttpError`].
-    pub fn html(http_error: HttpError<R>, body: impl Into<Bytes>) -> Self {
-        HttpErrorResponse {
-            http_error,
-            body: body.into(),
-            content_type: mime::TEXT_HTML,
+impl<E, F> From<E> for HttpErrorResponse<F>
+where
+    F: FormatResponse,
+    E: Into<HttpError>,
+{
+    fn from(e: E) -> Self {
+        Self {
+            http_error: e.into(),
+            _formatter: PhantomData,
         }
     }
 }
 
 #[cfg(feature = "axum")]
 #[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
-impl<R> axum::response::IntoResponse for HttpErrorResponse<R>
-where
-    R: fmt::Debug + Send + Sync + 'static,
-{
+impl<F: FormatResponse> axum::response::IntoResponse for HttpErrorResponse<F> {
     fn into_response(self) -> axum::response::Response {
         let mut resp = (
             self.http_error.status_code,
             [(
                 http::header::CONTENT_TYPE,
-                http::HeaderValue::from_str(self.content_type.as_ref()).unwrap(),
+                http::HeaderValue::from_str(F::content_type().as_ref()).unwrap(),
             )],
-            self.body,
+            F::format_response(&self.http_error),
         )
             .into_response();
         resp.extensions_mut()
@@ -79,21 +52,26 @@ where
 /// Trait for generating error responses.
 ///
 /// Types that implement `IntoHttpErrorResponse` are used as generic argument to [`HttpError`].
-pub trait IntoHttpErrorResponse {
-    /// The error response format.
-    type Fmt: fmt::Debug + Send + Sync;
-    /// Creates an error response.
-    fn into_http_error_response(http_error: HttpError<Self::Fmt>) -> HttpErrorResponse<Self::Fmt>;
+pub trait FormatResponse {
+    fn format_response(http_error: &HttpError) -> Bytes;
+    fn content_type() -> mime::Mime;
 }
 
+/// A [`HttpResult`] with configured [`Json`] formatter.
+#[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
+pub type HttpJsonResult<T> = core::result::Result<T, HttpErrorResponse<Json>>;
+
 /// A general purpose error response that formats a [`HttpError`] as Json.
+#[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
 #[derive(Debug)]
 pub struct Json;
 
-impl IntoHttpErrorResponse for Json {
-    type Fmt = Json;
-
-    fn into_http_error_response(http_error: HttpError<Self::Fmt>) -> HttpErrorResponse<Self::Fmt> {
+#[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
+impl FormatResponse for Json {
+    fn format_response(http_error: &HttpError) -> Bytes {
         let error_reason = http_error
             .reason()
             .as_deref()
@@ -101,15 +79,26 @@ impl IntoHttpErrorResponse for Json {
             .map(String::from);
 
         let mut resp = json!({
-            "error": error_reason,
+            "error": {
+                "message": error_reason,
+            },
         });
         if let Some(data) = &http_error.data {
             for (k, v) in data {
-                resp[k] = v.clone();
+                resp["error"][k] = v.clone();
             }
         }
 
-        HttpErrorResponse::json(http_error, resp)
+        let mut buf = BytesMut::with_capacity(128).writer();
+        if let Err(err) = serde_json::to_writer(&mut buf, &resp) {
+            return err.to_string().into();
+        }
+
+        buf.into_inner().freeze()
+    }
+
+    fn content_type() -> mime::Mime {
+        mime::APPLICATION_JSON
     }
 }
 
@@ -122,37 +111,47 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "json")]
     fn http_error_response_json() {
-        let resp: HttpErrorResponse<()> =
-            HttpErrorResponse::json(http_error!(BAD_REQUEST), serde_json::Value::Array(vec![]));
+        let resp: HttpErrorResponse<Json> = http_error!(BAD_REQUEST).into();
         assert_eq!(resp.http_error.status_code, StatusCode::BAD_REQUEST);
-        assert_eq!(resp.body, Bytes::from_static(b"[]"));
-        assert_eq!(resp.content_type, mime::APPLICATION_JSON);
     }
 
     #[test]
-    #[cfg(feature = "axum")]
+    #[cfg(all(feature = "axum", feature = "json"))]
     fn http_error_resonse_axum_into_response() {
         use axum::response::IntoResponse;
-        let resp: HttpErrorResponse<()> =
-            HttpErrorResponse::json(http_error!(BAD_REQUEST), serde_json::Value::Array(vec![]));
+        let resp: HttpErrorResponse<Json> = http_error!(BAD_REQUEST).into();
         let resp = resp.into_response();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
+    #[cfg(feature = "json")]
     fn http_error_json_response() {
-        let mut e: HttpError<Json> = http_error!(BAD_REQUEST, "invalid param",);
+        let mut e: HttpError = http_error!(BAD_REQUEST, "invalid param",);
         e.add("ctx", "some context").unwrap();
         e.add("code", 1234).unwrap();
-        let resp = e.into_http_error_response();
-        assert_eq!(resp.http_error.status_code, StatusCode::BAD_REQUEST);
+        let body = Json::format_response(&e);
+        let content_type = Json::content_type();
         assert_eq!(
-            resp.body,
+            body,
             Bytes::from_static(
-                b"{\"code\":1234,\"ctx\":\"some context\",\"error\":\"invalid param\"}"
+                b"{\"error\":{\"code\":1234,\"ctx\":\"some context\",\"message\":\"invalid param\"}}"
             )
         );
-        assert_eq!(resp.content_type, mime::APPLICATION_JSON);
+        assert_eq!(content_type, mime::APPLICATION_JSON);
+    }
+
+    #[test]
+    #[cfg(feature = "json")]
+    fn http_error_response_from_anyhow_downcast() {
+        let res: HttpResult<(), Json> = (|| {
+            let e: anyhow::Error = http_error!(BAD_REQUEST).into();
+            Err(e)?;
+            unreachable!()
+        })();
+        let e = res.unwrap_err().http_error;
+        assert_eq!(e.status_code(), StatusCode::BAD_REQUEST)
     }
 }

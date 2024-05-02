@@ -10,7 +10,7 @@
 //!    response::IntoResponse,
 //!    Router,
 //! };
-//! use anyhow_http::{http_error_ret, response::Result};
+//! use anyhow_http::{http_error_ret, response::HttpJsonResult};
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -23,11 +23,11 @@
 //!     axum::serve(listener, app).await.unwrap();
 //! }
 //!
-//! fn fallible_operation() -> Result<()> {
+//! fn fallible_operation() -> anyhow::Result<()> {
 //!     http_error_ret!(INTERNAL_SERVER_ERROR, "this is an error")
 //! }
 //!
-//! async fn handler() -> Result<impl IntoResponse> {
+//! async fn handler() -> HttpJsonResult<impl IntoResponse> {
 //!     fallible_operation()?;
 //!     Ok(())
 //! }
@@ -46,8 +46,8 @@ pub mod response;
 
 pub use http;
 
-// Not public API.
-#[doc(hidden)]
-pub mod __private {
-    pub use crate::macros::BridgeError;
-}
+//// Not public API.
+//#[doc(hidden)]
+//pub mod __private {
+//    pub use crate::macros::BridgeError;
+//}
