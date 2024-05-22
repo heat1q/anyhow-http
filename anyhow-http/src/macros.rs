@@ -1,3 +1,5 @@
+pub use anyhow_http_derive::HttpError;
+
 /// Construct an ad-hoc [`HttpError`] from a status code, optional source error and formatted reason.
 #[macro_export]
 macro_rules! http_error{
@@ -33,9 +35,53 @@ macro_rules! http_error_ret {
 
 #[cfg(test)]
 mod tests {
+
     use crate::*;
     use anyhow::anyhow;
+    use anyhow_http_derive::HttpError;
     use http::StatusCode;
+
+    #[derive(HttpError)]
+    enum CustomError {
+        #[http_error(status(500), reason("request failed: {0}"))]
+        RequestFailed(#[from] http::Error),
+        #[http_error(status(500))]
+        SerializationError,
+        #[http_error(status(400), reason("malformed body: {body}"))]
+        MalformedBody { body: String },
+        #[http_error(status(400))]
+        UrlParse(String, u16),
+        #[http_error(transparent)]
+        Proxy(#[from] HttpError),
+    }
+
+    //impl ::std::fmt::Display for CustomError {
+    //    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    //        match self {
+    //            CustomError::RequestFailed => write!(f, "http error {}")
+    //            CustomError::SerializationError => todo!(),
+    //        }
+    //    }
+    //}
+
+    //impl From<CustomError> for HttpError {
+    //    fn from(e: CustomError) -> Self {
+    //        match e {
+    //            CustomError::RequestFailed => HttpError::from_status_code(StatusCode::BAD_GATEWAY)
+    //                .with_reason("request failed"),
+    //            CustomError::SerializationError => {
+    //                HttpError::from_status_code(StatusCode::BAD_REQUEST)
+    //                    .with_reason("failed to read data")
+    //            }
+    //        }
+    //    }
+    //}
+
+    //impl From<CustomError> for anyhow::Error {
+    //    fn from(e: CustomError) -> Self {
+    //        HttpError::from(e).into()
+    //    }
+    //}
 
     #[test]
     fn http_error_status_code() {

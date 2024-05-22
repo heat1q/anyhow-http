@@ -1,0 +1,32 @@
+[package]
+name = "anyhow-http"
+description = "Customizable HTTP errors built on anyhow"
+documentation = "https://docs.rs/anyhow-http"
+repository = "https://github.com/heat1q/anyhow-http"
+license = "MIT"
+version = "0.3.0"
+edition = "2021"
+keywords = ["error", "http"]
+
+[dependencies]
+http.workspace = true
+
+anyhow = "1.0"
+bytes = "1.5"
+mime = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow-http-derive = { path = "../anyhow-http-derive" }
+
+axum = { version = "0.7", default-features = false, optional = true }
+
+[features]
+default = []
+axum = ["dep:axum"]
+json = []
+
+[dev-dependencies]
+anyhow-http = { path = "." }
+axum = { version = "0.7", features = ["default"] }
+tokio = { version = "1.21", features = ["full"] }
+hyper = "1.0"

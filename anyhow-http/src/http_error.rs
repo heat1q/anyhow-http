@@ -211,17 +211,6 @@ impl From<anyhow::Error> for HttpError {
     }
 }
 
-//#[cfg(feature = "axum")]
-//#[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
-//impl<R> axum::response::IntoResponse for HttpError
-//where
-//    R: IntoHttpErrorResponse<Fmt = R> + fmt::Debug + Send + Sync + 'static,
-//{
-//    fn into_response(self) -> axum::response::Response {
-//        R::into_http_error_response(self).into_response()
-//    }
-//}
-
 #[cfg(test)]
 mod tests {
     use anyhow::anyhow;
