@@ -1,3 +1,5 @@
+pub use anyhow_http_derive::HttpError;
+
 /// Construct an ad-hoc [`HttpError`] from a status code, optional source error and formatted reason.
 #[macro_export]
 macro_rules! http_error{
@@ -33,6 +35,7 @@ macro_rules! http_error_ret {
 
 #[cfg(test)]
 mod tests {
+
     use crate::*;
     use anyhow::anyhow;
     use http::StatusCode;
@@ -79,6 +82,5 @@ mod tests {
     fn http_error_bridge() {
         let _err: anyhow::Error = http_error!(BAD_REQUEST, "error",).into();
         let _err: HttpError = http_error!(BAD_REQUEST, "error",);
-        //let _err = http_error!(BAD_REQUEST, "error",);
     }
 }

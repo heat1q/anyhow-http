@@ -46,8 +46,7 @@ pub mod response;
 
 pub use http;
 
-//// Not public API.
-//#[doc(hidden)]
-//pub mod __private {
-//    pub use crate::macros::BridgeError;
-//}
+#[doc(hidden)]
+pub mod derive {
+    pub use anyhow_http_derive::HttpError;
+}

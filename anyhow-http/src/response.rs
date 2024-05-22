@@ -20,11 +20,11 @@ pub struct HttpErrorResponse<F: FormatResponse> {
 impl<E, F> From<E> for HttpErrorResponse<F>
 where
     F: FormatResponse,
-    E: Into<HttpError>,
+    E: Into<anyhow::Error>,
 {
     fn from(e: E) -> Self {
         Self {
-            http_error: e.into(),
+            http_error: HttpError::from_err(e),
             _formatter: PhantomData,
         }
     }
@@ -57,10 +57,15 @@ pub trait FormatResponse {
     fn content_type() -> mime::Mime;
 }
 
+/// A [`HttpErrorResponse`] with configured [`Json`] formatter.
+#[cfg(feature = "json")]
+#[cfg_attr(docsrs, doc(cfg(feature = "json")))]
+pub type HttpJsonErrorResponse = HttpErrorResponse<Json>;
+
 /// A [`HttpResult`] with configured [`Json`] formatter.
 #[cfg(feature = "json")]
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
-pub type HttpJsonResult<T> = core::result::Result<T, HttpErrorResponse<Json>>;
+pub type HttpJsonResult<T> = core::result::Result<T, HttpJsonErrorResponse>;
 
 /// A general purpose error response that formats a [`HttpError`] as Json.
 #[cfg(feature = "json")]
