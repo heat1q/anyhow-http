@@ -1,8 +1,5 @@
 //! Creating responses from [`HttpError`].
-use bytes::BufMut;
 use bytes::Bytes;
-use bytes::BytesMut;
-use serde_json::json;
 use std::marker::PhantomData;
 
 use crate::http_error::HttpError;
@@ -13,7 +10,7 @@ pub type HttpResult<T, F> = core::result::Result<T, HttpErrorResponse<F>>;
 /// Type representing an error response.
 #[derive(Debug)]
 pub struct HttpErrorResponse<F: FormatResponse> {
-    pub(crate) http_error: HttpError,
+    pub http_error: HttpError,
     _formatter: PhantomData<F>,
 }
 
@@ -49,9 +46,7 @@ impl<F: FormatResponse> axum::response::IntoResponse for HttpErrorResponse<F> {
     }
 }
 
-/// Trait for generating error responses.
-///
-/// Types that implement `IntoHttpErrorResponse` are used as generic argument to [`HttpError`].
+/// Trait for formatting error responses.
 pub trait FormatResponse {
     fn format_response(http_error: &HttpError) -> Bytes;
     fn content_type() -> mime::Mime;
@@ -77,13 +72,14 @@ pub struct Json;
 #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
 impl FormatResponse for Json {
     fn format_response(http_error: &HttpError) -> Bytes {
+        use bytes::BufMut;
         let error_reason = http_error
             .reason()
             .as_deref()
             .or_else(|| http_error.status_code().canonical_reason())
             .map(String::from);
 
-        let mut resp = json!({
+        let mut resp = serde_json::json!({
             "error": {
                 "message": error_reason,
             },
@@ -94,7 +90,7 @@ impl FormatResponse for Json {
             }
         }
 
-        let mut buf = BytesMut::with_capacity(128).writer();
+        let mut buf = bytes::BytesMut::with_capacity(128).writer();
         if let Err(err) = serde_json::to_writer(&mut buf, &resp) {
             return err.to_string().into();
         }
@@ -109,11 +105,9 @@ impl FormatResponse for Json {
 
 #[cfg(test)]
 mod tests {
-    use http::StatusCode;
-
-    use crate::http_error;
-
     use super::*;
+    use crate::http_error;
+    use http::StatusCode;
 
     #[test]
     #[cfg(feature = "json")]

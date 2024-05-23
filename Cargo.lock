@@ -42,7 +42,7 @@ dependencies = [
 
 [[package]]
 name = "anyhow-http-derive"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "darling",
  "http",

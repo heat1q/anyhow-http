@@ -8,8 +8,7 @@ use std::{borrow::Cow, collections::HashMap};
 
 use http::StatusCode;
 
-/// [`HttpError`] is an error that can be represented as a HTTP response. [`HttpError`] is generic over
-/// its response format, allowing consumers to implement their custom error response. See [`IntoHttpErrorResponse`].
+/// [`HttpError`] is an error that encapsulates data to generate Http error responses.
 #[derive(Debug)]
 pub struct HttpError {
     pub(crate) status_code: StatusCode,
