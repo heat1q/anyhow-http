@@ -1,7 +1,12 @@
 [package]
 name = "anyhow-http-derive"
+description = "Derive macros for HTTP errors"
+documentation = "https://docs.rs/anyhow-http"
+repository = "https://github.com/heat1q/anyhow-http"
+license = "MIT"
 version = "0.1.0"
 edition = "2021"
+keywords = ["error", "http"]
 
 [lib]
 proc-macro = true
