@@ -1,6 +1,4 @@
-pub use anyhow_http_derive::HttpError;
-
-/// Construct an ad-hoc [`HttpError`] from a status code, optional source error and formatted reason.
+/// Construct an ad-hoc [`HttpError`](super::HttpError) from a status code, optional source error and formatted reason.
 #[macro_export]
 macro_rules! http_error{
     ($status_code:ident, $reason:literal) => {
@@ -22,7 +20,7 @@ macro_rules! http_error{
     };
 }
 
-/// Shorthand macro to return early with an [`HttpError`].
+/// Shorthand macro to return early with an [`HttpError`](super::HttpError).
 #[macro_export]
 macro_rules! http_error_ret {
     ($status_code:ident $(, source = $src:expr)? $(, reason = $($arg:tt)*)?) => {

@@ -47,6 +47,7 @@ pub mod response;
 pub use http;
 
 #[doc(hidden)]
+#[cfg(feature = "derive")]
 pub mod derive {
     pub use anyhow_http_derive::HttpError;
 }

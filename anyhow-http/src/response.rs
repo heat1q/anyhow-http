@@ -49,9 +49,7 @@ impl<F: FormatResponse> axum::response::IntoResponse for HttpErrorResponse<F> {
     }
 }
 
-/// Trait for generating error responses.
-///
-/// Types that implement `IntoHttpErrorResponse` are used as generic argument to [`HttpError`].
+/// Trait for formatting error responses.
 pub trait FormatResponse {
     fn format_response(http_error: &HttpError) -> Bytes;
     fn content_type() -> mime::Mime;
