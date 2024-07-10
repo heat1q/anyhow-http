@@ -34,10 +34,10 @@ fn expand_enum(item: ItemEnum) -> syn::Result<TokenStream> {
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
-    let impl_display_block = impl_display(&item.ident, &variant_args);
-    let impl_from_http_error_block = impl_from_http_error(&item.ident, &variant_args);
+    let impl_display_block = impl_display(&item.ident, &variant_args)?;
+    let impl_from_http_error_block = impl_from_http_error(&item.ident, &variant_args)?;
     let impl_from_anyhow_error_block = impl_from_anyhow_error(&item.ident);
-    let impl_from_source_block = impl_from_source(&item.ident, &variant_args);
+    let impl_from_source_block = impl_from_source(&item.ident, &variant_args)?;
 
     let output = quote! {
         #impl_display_block
@@ -49,8 +49,8 @@ fn expand_enum(item: ItemEnum) -> syn::Result<TokenStream> {
     Ok(output)
 }
 
-fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> TokenStream {
-    let variants: Vec<TokenStream> = variant_args
+fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
+    let variants = variant_args
         .iter()
         .map(
             |(
@@ -61,7 +61,7 @@ fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> TokenStream {
                 let ident = quote!{
                     ::core::stringify!(#ty::#ident)
                 };
-                let source_field = SourceField::parse_from_variant(variant);
+                let source_field = SourceField::parse_from_variant(variant)?;
                 let span = variant.span();
                 let lhs = quote_match_variant_lhs(ty, variant);
                 let rhs = match (arg, &source_field) {
@@ -78,12 +78,12 @@ fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> TokenStream {
                         unreachable!()
                     },
                 };
-                quote_spanned! {span=>#lhs => #rhs,}
+                Ok(quote_spanned! {span=>#lhs => #rhs,})
             },
         )
-        .collect();
+        .collect::<syn::Result<Vec<_>>>()?;
 
-    quote! {
+    Ok(quote! {
         impl ::std::fmt::Display for #ty {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
                 match self {
@@ -91,7 +91,7 @@ fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> TokenStream {
                 }
             }
         }
-    }
+    })
 }
 
 fn quote_match_variant_lhs(ty: &Ident, variant: &Variant) -> TokenStream {
@@ -123,11 +123,11 @@ fn quote_match_variant_lhs(ty: &Ident, variant: &Variant) -> TokenStream {
     }
 }
 
-fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> TokenStream {
-    let variants: Vec<_> = variant_args
+fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
+    let variants = variant_args
         .iter()
         .map(|(variant, arg)| {
-            let source_field = SourceField::parse_from_variant(variant);
+            let source_field = SourceField::parse_from_variant(variant)?;
             let lhs = quote_match_variant_lhs(ty, variant);
             let span = variant.span();
             let rhs = match (arg, &source_field) {
@@ -178,11 +178,11 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> TokenSt
                     unreachable!()
                 }
             };
-            quote_spanned! {span=>#lhs => #rhs,}
+            Ok(quote_spanned! {span=>#lhs => #rhs,})
         })
-        .collect();
+        .collect::<syn::Result<Vec<_>>>()?;
 
-    quote! {
+    Ok(quote! {
         #[allow(fallible_impl_from, clippy::useless_format)]
         impl ::std::convert::From<#ty> for ::anyhow_http::HttpError {
             fn from(e: #ty) -> Self {
@@ -191,7 +191,7 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> TokenSt
                 }
             }
         }
-    }
+    })
 }
 
 fn impl_from_anyhow_error(ty: &Ident) -> TokenStream {
@@ -204,25 +204,30 @@ fn impl_from_anyhow_error(ty: &Ident) -> TokenStream {
     }
 }
 
-fn impl_from_source(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> TokenStream {
-    let from_impls: Vec<_> = variant_args
-        .iter()
-        .filter_map(|(variant, _)| {
-            let source_field = SourceField::parse_from_variant(variant)?;
-            let sty = source_field.field.ty;
-            let ident = &variant.ident;
+fn impl_from_source(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
+    let mut from_impls = quote! {};
+    for (variant, _) in variant_args {
+        let Some(source_field) = SourceField::parse_from_variant(variant)? else {
+            continue;
+        };
+        let sty = source_field.field.ty;
+        let ident = &variant.ident;
 
-            Some(quote! {
-                impl ::std::convert::From<#sty> for #ty {
-                    fn from(s: #sty) -> Self {
-                        Self::#ident(s)
-                    }
+        let from_source = quote! {
+            impl ::std::convert::From<#sty> for #ty {
+                fn from(s: #sty) -> Self {
+                    Self::#ident(s)
                 }
-            })
-        })
-        .collect();
+            }
+        };
 
-    quote! {#(#from_impls)*}
+        from_impls = quote! {
+            #from_impls
+            #from_source
+        };
+    }
+
+    Ok(from_impls)
 }
 
 #[derive(Debug)]
@@ -320,17 +325,23 @@ struct SourceField {
 }
 
 impl SourceField {
-    fn parse_from_variant(variant: &Variant) -> Option<Self> {
-        match &variant.fields {
+    fn parse_from_variant(variant: &Variant) -> syn::Result<Option<Self>> {
+        let source = match &variant.fields {
             Fields::Named(_) => None,
             Fields::Unnamed(f) => {
-                let field = f
+                let Some(field) = f
                     .unnamed
                     .iter()
-                    .find(|f| f.attrs.iter().any(|a| a.path().is_ident("from")))?;
+                    .find(|f| f.attrs.iter().any(|a| a.path().is_ident("from")))
+                else {
+                    return Ok(None);
+                };
 
                 if f.unnamed.len() > 1 {
-                    panic!("`#[from]` is only supported on single unnamed fields");
+                    return Err(spanned_err!(
+                        variant,
+                        "`#[from]` is only supported on single unnamed fields"
+                    ));
                 }
 
                 Some(Self {
@@ -339,6 +350,8 @@ impl SourceField {
                 })
             }
             Fields::Unit => None,
-        }
+        };
+
+        Ok(source)
     }
 }
