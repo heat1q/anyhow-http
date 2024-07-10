@@ -6,6 +6,14 @@ use syn::{
     ItemStruct, LitInt, LitStr, Variant,
 };
 
+const FORMAT_FIELD_PREFIX: &str = "__f_";
+
+macro_rules! format_field_ident {
+    ($fmt:expr) => {
+        format_ident!("{FORMAT_FIELD_PREFIX}{}", $fmt)
+    };
+}
+
 macro_rules! spanned_err {
     ($item:ident, $err:literal) => {
         syn::Error::new_spanned($item, concat!("`#[derive(HttpError)]`: ", $err))
@@ -61,22 +69,25 @@ fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Tok
                 let ident = quote!{
                     ::core::stringify!(#ty::#ident)
                 };
-                let source_field = SourceField::parse_from_variant(variant)?;
+                let variant_attr = VariantAttribute::parse_from_variant(variant)?;
                 let span = variant.span();
                 let lhs = quote_match_variant_lhs(ty, variant);
-                let rhs = match (arg, &source_field) {
-                    (Arg::Explicit { status_code, .. }, Some(SourceField { ident: sident, .. })) => {
+                let rhs = match (arg, &variant_attr) {
+                    (Arg::Explicit { status_code, .. }, Some(VariantAttribute::From { ident: sident, .. } | VariantAttribute::Source { ident: sident, .. })) => {
                         quote_spanned! {span=>::core::write!(f, "http error {}: {}: {}", #status_code, #ident, #sident)}
                     },
                     (Arg::Explicit { status_code, .. }, _) => {
                         quote_spanned! {span=>::core::write!(f, "http error {}: {}", #status_code, #ident)}
                     },
-                    (Arg::Transparent, Some(SourceField { ident: sident, .. })) => {
+                    (Arg::Transparent, Some(VariantAttribute::From { ident: sident, .. } | VariantAttribute::Source { ident: sident, .. })) => {
                         quote_spanned! {span=>#sident.fmt(f)}
                     },
-                    (_,_) => {
-                        unreachable!()
-                    },
+                    (Arg::Transparent, None) => {
+                        return Err(spanned_err!(
+                            variant,
+                            "`transparent` requires either `#[from]` or `#[source]`"
+                        ));
+                    }
                 };
                 Ok(quote_spanned! {span=>#lhs => #rhs,})
             },
@@ -104,7 +115,7 @@ fn quote_match_variant_lhs(ty: &Ident, variant: &Variant) -> TokenStream {
                 .iter()
                 .filter_map(|f| {
                     let lhs = f.ident.as_ref()?;
-                    let rhs = format_ident!("__f_{}", lhs);
+                    let rhs = format_field_ident!(lhs);
                     Some(quote! {#lhs: #rhs})
                 })
                 .collect();
@@ -115,7 +126,7 @@ fn quote_match_variant_lhs(ty: &Ident, variant: &Variant) -> TokenStream {
                 .unnamed
                 .iter()
                 .enumerate()
-                .map(|(i, _)| format_ident!("__f_{i}"))
+                .map(|(i, _)| format_field_ident!(i))
                 .collect();
             quote_spanned! {span=>#ty::#ident(#(#f,)*)}
         }
@@ -127,7 +138,7 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Re
     let variants = variant_args
         .iter()
         .map(|(variant, arg)| {
-            let source_field = SourceField::parse_from_variant(variant)?;
+            let source_field = VariantAttribute::parse_from_variant(variant)?;
             let lhs = quote_match_variant_lhs(ty, variant);
             let span = variant.span();
             let rhs = match (arg, &source_field) {
@@ -137,7 +148,10 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Re
                         reason: Some(reason),
                         ..
                     },
-                    Some(SourceField { ident: sident, .. }),
+                    Some(
+                        VariantAttribute::From { ident: sident, .. }
+                        | VariantAttribute::Source { ident: sident, .. },
+                    ),
                 ) => {
                     quote_spanned! {span=>
                         ::anyhow_http::HttpError::from_status_code(#status_code.try_into().unwrap())
@@ -158,7 +172,13 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Re
                             .with_reason(::std::format!(#reason))
                     }
                 }
-                (Arg::Explicit { status_code, .. }, Some(SourceField { ident: sident, .. })) => {
+                (
+                    Arg::Explicit { status_code, .. },
+                    Some(
+                        VariantAttribute::From { ident: sident, .. }
+                        | VariantAttribute::Source { ident: sident, .. },
+                    ),
+                ) => {
                     quote_spanned! {span=>
                         ::anyhow_http::HttpError::from_status_code(#status_code.try_into().unwrap())
                             .with_source_err(#sident)
@@ -169,13 +189,22 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Re
                         ::anyhow_http::HttpError::from_status_code(#status_code.try_into().unwrap())
                     }
                 }
-                (Arg::Transparent, Some(SourceField { ident: sident, .. })) => {
+                (
+                    Arg::Transparent,
+                    Some(
+                        VariantAttribute::From { ident: sident, .. }
+                        | VariantAttribute::Source { ident: sident, .. },
+                    ),
+                ) => {
                     quote_spanned! {span=>
                         ::anyhow_http::HttpError::from_err(#sident)
                     }
                 }
-                (_, _) => {
-                    unreachable!()
+                (Arg::Transparent, None) => {
+                    return Err(spanned_err!(
+                        variant,
+                        "`transparent` requires either `#[from]` or `#[source]`"
+                    ));
                 }
             };
             Ok(quote_spanned! {span=>#lhs => #rhs,})
@@ -207,10 +236,12 @@ fn impl_from_anyhow_error(ty: &Ident) -> TokenStream {
 fn impl_from_source(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
     let mut from_impls = quote! {};
     for (variant, _) in variant_args {
-        let Some(source_field) = SourceField::parse_from_variant(variant)? else {
+        let Some(VariantAttribute::From { field, .. }) =
+            VariantAttribute::parse_from_variant(variant)?
+        else {
             continue;
         };
-        let sty = source_field.field.ty;
+        let sty = field.ty;
         let ident = &variant.ident;
 
         let from_source = quote! {
@@ -311,7 +342,7 @@ impl Arg {
         for c in reason.value().chars() {
             format.push(c);
             if c == '{' {
-                format.push_str("__f_");
+                format.push_str(FORMAT_FIELD_PREFIX);
             }
         }
         Ok(format)
@@ -319,39 +350,66 @@ impl Arg {
 }
 
 #[derive(Debug)]
-struct SourceField {
-    ident: Ident,
-    field: Field,
+enum VariantAttribute {
+    From { ident: Ident, field: Field },
+    Source { ident: Ident },
 }
 
-impl SourceField {
+impl VariantAttribute {
     fn parse_from_variant(variant: &Variant) -> syn::Result<Option<Self>> {
-        let source = match &variant.fields {
-            Fields::Named(_) => None,
-            Fields::Unnamed(f) => {
-                let Some(field) = f
-                    .unnamed
-                    .iter()
-                    .find(|f| f.attrs.iter().any(|a| a.path().is_ident("from")))
-                else {
-                    return Ok(None);
-                };
+        let from_field = Self::field_for_attribute(&variant.fields, "from");
+        let source_field = Self::field_for_attribute(&variant.fields, "source");
+        match (from_field, source_field) {
+            (Some(_), Some(_)) => Err(spanned_err!(variant, "invalid attrs")),
+            (Some(from_field), _) => Self::parse_from_attr(variant, from_field),
+            (_, Some(source_field)) => Self::parse_source_attr(variant, source_field),
+            _ => Ok(None),
+        }
+    }
 
-                if f.unnamed.len() > 1 {
-                    return Err(spanned_err!(
-                        variant,
-                        "`#[from]` is only supported on single unnamed fields"
-                    ));
-                }
-
-                Some(Self {
-                    ident: format_ident!("__f_0"),
-                    field: field.clone(),
-                })
-            }
+    fn field_for_attribute(fields: &Fields, attr_ident: &str) -> Option<Field> {
+        match fields {
+            Fields::Named(f) => f
+                .named
+                .iter()
+                .find(|f| f.attrs.iter().any(|a| a.path().is_ident(attr_ident)))
+                .cloned(),
+            Fields::Unnamed(f) => f
+                .unnamed
+                .iter()
+                .enumerate()
+                .find(|(_, f)| f.attrs.iter().any(|a| a.path().is_ident(attr_ident)))
+                .map(|(pos, f)| {
+                    let mut f = f.clone();
+                    f.ident = Some(format_field_ident!(pos));
+                    f
+                }),
             Fields::Unit => None,
-        };
+        }
+    }
 
-        Ok(source)
+    fn parse_from_attr(variant: &Variant, field: Field) -> syn::Result<Option<Self>> {
+        match &variant.fields {
+            Fields::Unnamed(f) if f.unnamed.len() == 1 => Ok(Some(Self::From {
+                ident: format_field_ident!("0"),
+                field,
+            })),
+            _ => Err(spanned_err!(
+                variant,
+                "`#[from]` is only supported on single unnamed fields"
+            )),
+        }
+    }
+
+    fn parse_source_attr(variant: &Variant, field: Field) -> syn::Result<Option<Self>> {
+        match &variant.fields {
+            Fields::Named(_) => Ok(Some(Self::Source {
+                ident: format_field_ident!(field.ident.unwrap()),
+            })),
+            Fields::Unnamed(_) => Ok(Some(Self::Source {
+                ident: field.ident.unwrap(),
+            })),
+            Fields::Unit => unreachable!(),
+        }
     }
 }
