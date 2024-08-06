@@ -1,6 +1,5 @@
 use anyhow::anyhow;
 use core::fmt;
-use fmt::Debug;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::error::Error as StdError;
@@ -9,7 +8,6 @@ use std::{borrow::Cow, collections::HashMap};
 use http::StatusCode;
 
 /// [`HttpError`] is an error that encapsulates data to generate Http error responses.
-#[derive(Debug)]
 pub struct HttpError {
     pub(crate) status_code: StatusCode,
     pub(crate) reason: Option<Cow<'static, str>>,
@@ -17,12 +15,31 @@ pub struct HttpError {
     pub(crate) data: Option<HashMap<String, serde_json::Value>>,
 }
 
+impl fmt::Debug for HttpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "HttpError\nStatus: {status_code}\nReason: {reason:?}\nData: {data:?}\n\nSource: {source:?}",
+            status_code = self.status_code,
+            reason = self.reason,
+            data = self.data,
+            source = self.source
+        )
+    }
+}
+
 impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (&self.reason, &self.source) {
             (None, None) => write!(f, "http error {}", self.status_code),
-            (None, Some(s)) => write!(f, "http error {}, source: {s}", self.status_code),
             (Some(r), None) => write!(f, "http error {}: {r}", self.status_code),
+            (None, Some(s)) if f.alternate() => {
+                write!(f, "http error {}, source: {s:#}", self.status_code)
+            }
+            (None, Some(s)) => write!(f, "http error {}, source: {s}", self.status_code),
+            (Some(r), Some(s)) if f.alternate() => {
+                write!(f, "http error {}: {r}, source: {s:#}", self.status_code)
+            }
             (Some(r), Some(s)) => write!(f, "http error {}: {r}, source: {s}", self.status_code),
         }
     }
@@ -96,6 +113,20 @@ impl HttpError {
     /// Sets the error reason.
     pub fn with_reason<S: Into<Cow<'static, str>>>(mut self, reason: S) -> Self {
         self.reason = Some(reason.into());
+        self
+    }
+
+    /// Adds context to the source error. If no source is availabe a new [`anyhow::Error`] is
+    /// created in its place.
+    pub fn with_source_context<C>(mut self, context: C) -> Self
+    where
+        C: fmt::Display + Send + Sync + 'static,
+    {
+        let source = match self.source {
+            Some(s) => s.context(context),
+            None => anyhow!("{context}"),
+        };
+        self.source = Some(source);
         self
     }
 
@@ -333,6 +364,17 @@ mod tests {
     fn http_error_with_reason() {
         let e: HttpError = HttpError::default().with_reason("reason");
         assert_eq!(e.reason(), Some("reason".into()));
+    }
+
+    #[test]
+    fn http_error_with_source_context() {
+        let e: HttpError = HttpError::default().with_source_context("context");
+        assert_eq!(e.source().map(ToString::to_string), Some("context".into()));
+
+        let e: HttpError = HttpError::default()
+            .with_source_err(anyhow!("source"))
+            .with_source_context("context");
+        assert_eq!(format!("{:#}", e.source().unwrap()), "context: source");
     }
 
     #[test]
