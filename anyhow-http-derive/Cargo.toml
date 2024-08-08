@@ -18,3 +18,15 @@ darling = "0.20"
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
+
+[dev-dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+anyhow-http = { path = "../anyhow-http" }
+
+# docs.rs-specific configuration
+[package.metadata.docs.rs]
+# document all features
+all-features = true
+# defines the configuration attribute `docsrs`
+rustdoc-args = ["--cfg", "docsrs"]

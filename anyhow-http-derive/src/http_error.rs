@@ -1,9 +1,12 @@
+use core::panic;
+use std::collections::HashMap;
+
 use http::StatusCode;
 use proc_macro2::{self, TokenStream};
-use quote::{format_ident, quote, quote_spanned};
+use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::{
-    parenthesized, parse::ParseBuffer, spanned::Spanned, Field, Fields, Ident, Item, ItemEnum,
-    ItemStruct, LitInt, LitStr, Variant,
+    parenthesized, parse::ParseBuffer, punctuated::Punctuated, spanned::Spanned, Expr, ExprAssign,
+    Field, Fields, Ident, Item, ItemEnum, ItemStruct, Lit, LitInt, LitStr, Token, Variant,
 };
 
 const FORMAT_FIELD_PREFIX: &str = "__f_";
@@ -134,6 +137,34 @@ fn quote_match_variant_lhs(ty: &Ident, variant: &Variant) -> TokenStream {
     }
 }
 
+fn impl_http_error_builder_arg(arg: &Arg) -> TokenStream {
+    let Arg::Explicit {
+        status_code,
+        reason,
+        data,
+    } = &arg
+    else {
+        panic!(
+            "impl_http_error_builder_arg should only be invoked on explicit args. This is a bug!"
+        );
+    };
+
+    let with_reason = reason
+        .as_ref()
+        .map(|r| quote! { .with_reason(::std::format!(#r)) });
+    let with_data: Option<TokenStream> = data.as_ref().map(|d| {
+        d.iter()
+            .map(|(k, v)| quote! { .with_key_value(#k, #v) })
+            .collect()
+    });
+
+    quote! {
+        .with_status_code(#status_code.try_into().unwrap())
+        #with_reason
+        #with_data
+    }
+}
+
 fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
     let variants = variant_args
         .iter()
@@ -143,50 +174,24 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Re
             let span = variant.span();
             let rhs = match (arg, &source_field) {
                 (
-                    Arg::Explicit {
-                        status_code,
-                        reason: Some(reason),
-                        ..
-                    },
+                    args @ Arg::Explicit { .. },
                     Some(
                         VariantAttribute::From { ident: sident, .. }
                         | VariantAttribute::Source { ident: sident, .. },
                     ),
                 ) => {
+                    let builder_args = impl_http_error_builder_arg(args);
                     quote_spanned! {span=>
-                        ::anyhow_http::HttpError::from_status_code(#status_code.try_into().unwrap())
-                            .with_reason(::std::format!(#reason))
+                        ::anyhow_http::HttpError::default()
+                            #builder_args
                             .with_source_err(#sident)
                     }
                 }
-                (
-                    Arg::Explicit {
-                        status_code,
-                        reason: Some(reason),
-                        ..
-                    },
-                    None,
-                ) => {
+                (args @ Arg::Explicit { .. }, None) => {
+                    let builder_args = impl_http_error_builder_arg(args);
                     quote_spanned! {span=>
-                        ::anyhow_http::HttpError::from_status_code(#status_code.try_into().unwrap())
-                            .with_reason(::std::format!(#reason))
-                    }
-                }
-                (
-                    Arg::Explicit { status_code, .. },
-                    Some(
-                        VariantAttribute::From { ident: sident, .. }
-                        | VariantAttribute::Source { ident: sident, .. },
-                    ),
-                ) => {
-                    quote_spanned! {span=>
-                        ::anyhow_http::HttpError::from_status_code(#status_code.try_into().unwrap())
-                            .with_source_err(#sident)
-                    }
-                }
-                (Arg::Explicit { status_code, .. }, _) => {
-                    quote_spanned! {span=>
-                        ::anyhow_http::HttpError::from_status_code(#status_code.try_into().unwrap())
+                        ::anyhow_http::HttpError::default()
+                            #builder_args
                     }
                 }
                 (
@@ -266,6 +271,7 @@ enum Arg {
     Explicit {
         status_code: LitInt,
         reason: Option<String>,
+        data: Option<HashMap<String, DataArg>>,
     },
     Transparent,
 }
@@ -274,6 +280,7 @@ impl Arg {
     fn parse_from_variant(variant: &Variant) -> syn::Result<Self> {
         let mut status_code = None;
         let mut reason = None;
+        let mut data = None;
         let mut transparent = false;
         let attr = variant
             .attrs
@@ -296,6 +303,13 @@ impl Arg {
                 return Ok(());
             }
 
+            if meta.path.is_ident("data") {
+                let content;
+                parenthesized!(content in meta.input);
+                data = Some(Self::parse_data(&content)?);
+                return Ok(());
+            }
+
             if meta.path.is_ident("transparent") {
                 transparent = true;
                 return Ok(());
@@ -305,10 +319,10 @@ impl Arg {
         })?;
 
         if transparent {
-            if status_code.is_some() || reason.is_some() {
+            if status_code.is_some() || reason.is_some() || data.is_some() {
                 return Err(spanned_err!(
                     variant,
-                    "`#[http_error(transparent)]` may not use `status` or `reason`"
+                    "`#[http_error(transparent)]` may not use `status`, `reason` or `data`"
                 ));
             }
 
@@ -325,6 +339,7 @@ impl Arg {
         Ok(Self::Explicit {
             status_code,
             reason,
+            data,
         })
     }
 
@@ -338,14 +353,62 @@ impl Arg {
 
     fn parse_reason(buf: &ParseBuffer) -> syn::Result<String> {
         let reason: LitStr = buf.parse()?;
-        let mut format = String::new();
-        for c in reason.value().chars() {
-            format.push(c);
-            if c == '{' {
-                format.push_str(FORMAT_FIELD_PREFIX);
+        Ok(parse_format_string(&reason))
+    }
+
+    fn parse_data(buf: &ParseBuffer) -> syn::Result<HashMap<String, DataArg>> {
+        let mut data: HashMap<String, DataArg> = Default::default();
+        let args: Punctuated<ExprAssign, Token![,]> = Punctuated::parse_terminated(buf)?;
+
+        for arg in &args {
+            match (arg.left.as_ref(), arg.right.as_ref()) {
+                (Expr::Path(p), Expr::Lit(l)) => {
+                    let ident = p.path.get_ident().unwrap();
+                    data.insert(ident.to_string(), DataArg::parse_from_lit(&l.lit));
+                }
+                _ => Err(spanned_err!(arg, "invalid data argument"))?,
             }
         }
-        Ok(format)
+
+        Ok(data)
+    }
+}
+
+fn parse_format_string(lit: &LitStr) -> String {
+    let mut format = String::new();
+    for c in lit.value().chars() {
+        format.push(c);
+        if c == '{' {
+            format.push_str(FORMAT_FIELD_PREFIX);
+        }
+    }
+    format
+}
+
+#[derive(Debug)]
+enum DataArg {
+    Format(String),
+    Lit(Lit),
+}
+
+impl DataArg {
+    fn parse_from_lit(lit: &Lit) -> Self {
+        match lit {
+            Lit::Str(s) => {
+                let format = parse_format_string(s);
+                Self::Format(format)
+            }
+            _ => Self::Lit(lit.clone()),
+        }
+    }
+}
+
+impl ToTokens for DataArg {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            DataArg::Format(f) => quote! {::std::format!(#f)}.to_tokens(tokens),
+            DataArg::Lit(l) => l.to_tokens(tokens),
+        }
     }
 }
 

@@ -1,3 +1,5 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
 //! `anyhow-http` offers customizable HTTP errors built on [`anyhow`] errors.
 //!
 //! This crates acts as a superset of [`anyhow`], extending the functionality to define custom
@@ -10,7 +12,7 @@
 //!    response::IntoResponse,
 //!    Router,
 //! };
-//! use anyhow_http::{http_error_ret, response::HttpJsonResult};
+//! use anyhow_http::{http_error_bail, response::HttpJsonResult};
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -24,7 +26,7 @@
 //! }
 //!
 //! fn fallible_operation() -> anyhow::Result<()> {
-//!     http_error_ret!(INTERNAL_SERVER_ERROR, "this is an error")
+//!     http_error_bail!(INTERNAL_SERVER_ERROR, "this is an error")
 //! }
 //!
 //! async fn handler() -> HttpJsonResult<impl IntoResponse> {
@@ -46,8 +48,8 @@ pub mod response;
 
 pub use http;
 
-#[doc(hidden)]
 #[cfg(feature = "derive")]
+#[cfg_attr(docsrs, doc(cfg(feature = "derive")))]
 pub mod derive {
-    pub use anyhow_http_derive::HttpError;
+    pub use anyhow_http_derive::FromHttpError;
 }

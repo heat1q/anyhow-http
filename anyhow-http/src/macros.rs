@@ -1,4 +1,18 @@
 /// Construct an ad-hoc [`HttpError`](super::HttpError) from a status code, optional source error and formatted reason.
+///
+/// ```
+/// # use anyhow::anyhow;
+/// # use anyhow_http::http_error;
+/// fn foo() -> anyhow::Result<()> {
+///     const CODE: i32 = 1234;
+///     Err(http_error!(BAD_REQUEST, "invalid payload, code {}", CODE))?;
+///
+///     // with source
+///     let source = anyhow!("source error");
+///     Err(http_error!(BAD_REQUEST, source = source, reason = "invalid payload, code {}", CODE))?;
+///     Ok(())
+/// }
+/// ```
 #[macro_export]
 macro_rules! http_error{
     ($status_code:ident, $reason:literal) => {
@@ -21,8 +35,16 @@ macro_rules! http_error{
 }
 
 /// Shorthand macro to return early with an [`HttpError`](super::HttpError).
+///
+/// Example:
+/// ```
+/// # use anyhow_http::http_error_bail;
+/// fn foo() -> anyhow::Result<()> {
+///     http_error_bail!(BAD_REQUEST, "invalid payload")
+/// }
+/// ```
 #[macro_export]
-macro_rules! http_error_ret {
+macro_rules! http_error_bail {
     ($status_code:ident $(, source = $src:expr)? $(, reason = $($arg:tt)*)?) => {
         return Err($crate::http_error!($status_code $(, source = $src)? $(, reason = $($arg)*)?).into())
     };

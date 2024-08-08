@@ -128,9 +128,9 @@ mod tests {
     #[test]
     #[cfg(feature = "json")]
     fn http_error_json_response() {
-        let mut e: HttpError = http_error!(BAD_REQUEST, "invalid param",);
-        e.add("ctx", "some context").unwrap();
-        e.add("code", 1234).unwrap();
+        let e: HttpError = http_error!(BAD_REQUEST, "invalid param",);
+        let e = e.with_key_value("ctx", "some context");
+        let e = e.with_key_value("code", 1234);
         let body = Json::format_response(&e);
         let content_type = Json::content_type();
         assert_eq!(

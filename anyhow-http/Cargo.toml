@@ -10,9 +10,9 @@ keywords = ["error", "http"]
 
 [dependencies]
 http.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
 
-anyhow = "1.0"
-bytes = "1.5"
 mime = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -31,3 +31,10 @@ anyhow-http = { path = "." }
 axum = { version = "0.7", features = ["default"] }
 tokio = { version = "1.21", features = ["full"] }
 hyper = "1.0"
+
+# docs.rs-specific configuration
+[package.metadata.docs.rs]
+# document all features
+all-features = true
+# defines the configuration attribute `docsrs`
+rustdoc-args = ["--cfg", "docsrs"]

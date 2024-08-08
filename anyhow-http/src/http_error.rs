@@ -82,7 +82,7 @@ impl HttpError {
     /// Creates a [`HttpError`] with status code and reason. This constructor can be evaluated at
     /// compile time.
     ///
-    /// ```rust
+    /// ```
     /// use anyhow_http::HttpError;
     ///
     /// const BAD_REQUEST: HttpError =
@@ -147,7 +147,7 @@ impl HttpError {
 
     /// Append to to the inner data based on one or more key-value pairs.
     ///
-    /// ```rust
+    /// ```
     /// use anyhow_http::HttpError;
     ///
     /// let err: HttpError = HttpError::default()
@@ -177,15 +177,18 @@ impl HttpError {
     }
 
     /// Adds a key-pair value to the inner data.
-    pub fn add<K, V>(&mut self, key: K, value: V) -> serde_json::Result<()>
+    pub fn with_key_value<K, V>(mut self, key: K, value: V) -> Self
     where
         K: Into<String>,
         V: Serialize + Sync + Send + 'static,
     {
+        let Ok(value) = serde_json::to_value(value) else {
+            return self;
+        };
         self.data
             .get_or_insert_with(HashMap::new)
-            .insert(key.into(), serde_json::to_value(value)?);
-        Ok(())
+            .insert(key.into(), value);
+        self
     }
 
     /// Retrieves a key-pair value from the inner data.
@@ -392,8 +395,7 @@ mod tests {
 
     #[test]
     fn http_error_data() {
-        let mut e: HttpError = HttpError::default();
-        e.add("key", 1234).unwrap();
+        let e: HttpError = HttpError::default().with_key_value("key", 1234);
         assert_eq!(e.get::<i32>("key"), Some(1234));
         assert_eq!(e.get::<String>("key"), None);
     }
