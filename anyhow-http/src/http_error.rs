@@ -31,16 +31,16 @@ impl fmt::Debug for HttpError {
 impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (&self.reason, &self.source) {
-            (None, None) => write!(f, "http error {}", self.status_code),
-            (Some(r), None) => write!(f, "http error {}: {r}", self.status_code),
+            (None, None) => write!(f, "HttpError({})", self.status_code),
+            (Some(r), None) => write!(f, "HttpError({}): {r}", self.status_code),
             (None, Some(s)) if f.alternate() => {
-                write!(f, "http error {}, source: {s:#}", self.status_code)
+                write!(f, "HttpError({}): source: {s:#}", self.status_code)
             }
-            (None, Some(s)) => write!(f, "http error {}, source: {s}", self.status_code),
+            (None, Some(s)) => write!(f, "HttpError({}): source: {s}", self.status_code),
             (Some(r), Some(s)) if f.alternate() => {
-                write!(f, "http error {}: {r}, source: {s:#}", self.status_code)
+                write!(f, "HttpError({}): {r}, source: {s:#}", self.status_code)
             }
-            (Some(r), Some(s)) => write!(f, "http error {}: {r}, source: {s}", self.status_code),
+            (Some(r), Some(s)) => write!(f, "HttpError({}): {r}, source: {s}", self.status_code),
         }
     }
 }
@@ -253,18 +253,18 @@ mod tests {
     #[test]
     fn http_error_display() {
         let e: HttpError = HttpError::default();
-        assert_eq!(e.to_string(), "http error 500 Internal Server Error");
+        assert_eq!(e.to_string(), "HttpError(500 Internal Server Error)");
 
         let e: HttpError = HttpError::default().with_reason("reason");
         assert_eq!(
             e.to_string(),
-            "http error 500 Internal Server Error: reason"
+            "HttpError(500 Internal Server Error): reason"
         );
 
         let e: HttpError = HttpError::default().with_source_err(anyhow!("error"));
         assert_eq!(
             e.to_string(),
-            "http error 500 Internal Server Error, source: error"
+            "HttpError(500 Internal Server Error): source: error"
         );
 
         let e: HttpError = HttpError::default()
@@ -272,7 +272,7 @@ mod tests {
             .with_source_err(anyhow!("error"));
         assert_eq!(
             e.to_string(),
-            "http error 500 Internal Server Error: reason, source: error"
+            "HttpError(500 Internal Server Error): reason, source: error"
         );
     }
 
