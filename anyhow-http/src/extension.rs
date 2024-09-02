@@ -4,7 +4,7 @@ use std::{borrow::Cow, result::Result as StdResult};
 use crate::HttpError;
 
 /// Extension trait to map the error variant of a [`Result`] to a [`HttpError`].
-pub trait ResultExt<R> {
+pub trait ResultExt {
     type Item;
 
     /// Maps a `Result<T, E>` to `Result<T, HttpError<R>>` by creating a [`HttpError`] with the
@@ -16,12 +16,12 @@ pub trait ResultExt<R> {
     /// use http::StatusCode;
     /// use anyhow_http::{http_error, HttpError, ResultExt};
     ///
-    /// let s: Result<i32, HttpError<()>> = "nan"
+    /// let s: Result<i32, HttpError> = "nan"
     ///     .parse::<i32>()
     ///     .map_status(StatusCode::BAD_REQUEST);
     /// assert_eq!(s, Err(http_error!(BAD_REQUEST)));
     /// ```
-    fn map_status(self, status_code: StatusCode) -> StdResult<Self::Item, HttpError<R>>;
+    fn map_status(self, status_code: StatusCode) -> StdResult<Self::Item, HttpError>;
 
     /// Maps a `Result<T, E>` to `Result<T, HttpError<R>>` by creating a [`HttpError`] with the
     /// specified status code and reason wrapping the error contained [`Err`].
@@ -32,7 +32,7 @@ pub trait ResultExt<R> {
     /// use http::StatusCode;
     /// use anyhow_http::{http_error, HttpError, ResultExt};
     ///
-    /// let s: Result<i32, HttpError<()>> = "nan"
+    /// let s: Result<i32, HttpError> = "nan"
     ///     .parse::<i32>()
     ///     .map_http_error(StatusCode::BAD_REQUEST, "invalid number");
     /// assert_eq!(s, Err(http_error!(BAD_REQUEST, "invalid number")));
@@ -41,22 +41,21 @@ pub trait ResultExt<R> {
         self,
         status_code: StatusCode,
         reason: S,
-    ) -> StdResult<Self::Item, HttpError<R>>
+    ) -> StdResult<Self::Item, HttpError>
     where
         S: Into<Cow<'static, str>>;
 }
 
-impl<E, R, T> ResultExt<R> for StdResult<T, E>
+impl<E, T> ResultExt for StdResult<T, E>
 where
-    E: Into<HttpError<R>> + Send + Sync + 'static,
-    R: std::fmt::Debug + Send + Sync + 'static,
+    E: Into<anyhow::Error> + Send + Sync + 'static,
 {
     type Item = T;
 
-    fn map_status(self, status_code: StatusCode) -> StdResult<T, HttpError<R>> {
+    fn map_status(self, status_code: StatusCode) -> StdResult<T, HttpError> {
         match self {
             Ok(v) => Ok(v),
-            Err(e) => Err(E::into(e).with_status_code(status_code)),
+            Err(e) => Err(HttpError::from_err(e).with_status_code(status_code)),
         }
     }
 
@@ -64,13 +63,13 @@ where
         self,
         status_code: StatusCode,
         reason: S,
-    ) -> StdResult<Self::Item, HttpError<R>>
+    ) -> StdResult<Self::Item, HttpError>
     where
         S: Into<Cow<'static, str>>,
     {
         match self {
             Ok(v) => Ok(v),
-            Err(e) => Err(E::into(e)
+            Err(e) => Err(HttpError::from_err(e)
                 .with_status_code(status_code)
                 .with_reason(reason.into())),
         }
@@ -78,7 +77,7 @@ where
 }
 
 /// Extension trait to transform an [`Option`] to a [`HttpError`].
-pub trait OptionExt<R> {
+pub trait OptionExt {
     type Item;
 
     /// Transforms the `Option<T>` into a `Result<T, HttpError<R>>`, mapping `Some(v)` to
@@ -90,19 +89,16 @@ pub trait OptionExt<R> {
     /// use http::StatusCode;
     /// use anyhow_http::{http_error, HttpError, OptionExt};
     ///
-    /// let x: Result<_, HttpError<()>> = None::<()>.ok_or_status(StatusCode::BAD_REQUEST);
+    /// let x: Result<_, HttpError> = None::<()>.ok_or_status(StatusCode::BAD_REQUEST);
     /// assert_eq!(x, Err(http_error!(BAD_REQUEST)));
     /// ```
-    fn ok_or_status(self, status_code: StatusCode) -> StdResult<Self::Item, HttpError<R>>;
+    fn ok_or_status(self, status_code: StatusCode) -> StdResult<Self::Item, HttpError>;
 }
 
-impl<R, T> OptionExt<R> for std::option::Option<T>
-where
-    R: std::fmt::Debug + Send + Sync + 'static,
-{
+impl<T> OptionExt for std::option::Option<T> {
     type Item = T;
 
-    fn ok_or_status(self, status_code: StatusCode) -> StdResult<T, HttpError<R>> {
+    fn ok_or_status(self, status_code: StatusCode) -> StdResult<T, HttpError> {
         match self {
             Some(v) => Ok(v),
             None => Err(HttpError::from_status_code(status_code)),
@@ -119,7 +115,7 @@ mod tests {
     #[test]
     fn http_err_ext_result_map_status() {
         let result: StdResult<(), _> = Err(anyhow!("error"));
-        let http_result: StdResult<_, HttpError<()>> = result.map_status(StatusCode::BAD_REQUEST);
+        let http_result: StdResult<_, HttpError> = result.map_status(StatusCode::BAD_REQUEST);
 
         let Err(e) = http_result else { unreachable!() };
         assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
@@ -128,12 +124,11 @@ mod tests {
 
     #[test]
     fn http_err_ext_result_map_http_error() {
-        let s: StdResult<i32, HttpError<()>> =
-            "nan".parse::<i32>().map_status(StatusCode::BAD_REQUEST);
+        let s: StdResult<i32, HttpError> = "nan".parse::<i32>().map_status(StatusCode::BAD_REQUEST);
         assert_eq!(s, Err(HttpError::from_status_code(StatusCode::BAD_REQUEST)));
 
         let result: StdResult<(), _> = Err(anyhow!("error"));
-        let http_result: StdResult<_, HttpError<()>> =
+        let http_result: StdResult<_, HttpError> =
             result.map_http_error(StatusCode::BAD_REQUEST, "invalid request");
 
         let Err(e) = http_result else { unreachable!() };
@@ -145,7 +140,7 @@ mod tests {
     #[test]
     fn http_err_ext_option() {
         let opt: Option<()> = None;
-        let http_result: StdResult<_, HttpError<()>> = opt.ok_or_status(StatusCode::BAD_REQUEST);
+        let http_result: StdResult<_, HttpError> = opt.ok_or_status(StatusCode::BAD_REQUEST);
 
         let Err(e) = http_result else { unreachable!() };
         assert_eq!(e.status_code, StatusCode::BAD_REQUEST);

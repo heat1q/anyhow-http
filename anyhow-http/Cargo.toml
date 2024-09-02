@@ -1,0 +1,40 @@
+[package]
+name = "anyhow-http"
+description = "Customizable HTTP errors built on anyhow"
+documentation = "https://docs.rs/anyhow-http"
+repository = "https://github.com/heat1q/anyhow-http"
+license = "MIT"
+version = "0.4.0-rc.1"
+edition = "2021"
+keywords = ["error", "http"]
+
+[dependencies]
+http.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+
+mime = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow-http-derive = { path = "../anyhow-http-derive", version = "0.1.0-alpha.1", optional = true }
+
+axum = { version = "0.7", default-features = false, optional = true }
+
+[features]
+default = []
+axum = ["dep:axum"]
+json = []
+derive = ["dep:anyhow-http-derive"]
+
+[dev-dependencies]
+anyhow-http = { path = "." }
+axum = { version = "0.7", features = ["default"] }
+tokio = { version = "1.21", features = ["full"] }
+hyper = "1.0"
+
+# docs.rs-specific configuration
+[package.metadata.docs.rs]
+# document all features
+all-features = true
+# defines the configuration attribute `docsrs`
+rustdoc-args = ["--cfg", "docsrs"]

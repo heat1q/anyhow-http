@@ -1,0 +1,32 @@
+[package]
+name = "anyhow-http-derive"
+description = "Derive macros for HTTP errors"
+documentation = "https://docs.rs/anyhow-http"
+repository = "https://github.com/heat1q/anyhow-http"
+license = "MIT"
+version = "0.1.0-alpha.1"
+edition = "2021"
+keywords = ["error", "http"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+http.workspace = true
+
+darling = "0.20"
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }
+
+[dev-dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+anyhow-http = { path = "../anyhow-http" }
+
+# docs.rs-specific configuration
+[package.metadata.docs.rs]
+# document all features
+all-features = true
+# defines the configuration attribute `docsrs`
+rustdoc-args = ["--cfg", "docsrs"]
