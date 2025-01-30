@@ -45,12 +45,14 @@ fn expand_enum(item: ItemEnum) -> syn::Result<TokenStream> {
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
+    let impl_block = impl_block(&item.ident, &variant_args)?;
     let impl_display_block = impl_display(&item.ident, &variant_args)?;
     let impl_from_http_error_block = impl_from_http_error(&item.ident, &variant_args)?;
     let impl_from_anyhow_error_block = impl_from_anyhow_error(&item.ident);
     let impl_from_source_block = impl_from_source(&item.ident, &variant_args)?;
 
     let output = quote! {
+        #impl_block
         #impl_display_block
         #impl_from_http_error_block
         #impl_from_anyhow_error_block
@@ -60,41 +62,58 @@ fn expand_enum(item: ItemEnum) -> syn::Result<TokenStream> {
     Ok(output)
 }
 
+fn impl_block(ty: &Ident, _variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
+    Ok(quote! {
+        impl #ty {
+            fn as_error(&self) -> ::anyhow::Error {
+                ::anyhow::anyhow!("{}", self)
+            }
+        }
+    })
+}
+
 fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
     let variants = variant_args
         .iter()
-        .map(
-            |(
-                variant,
-                arg,
-            )| {
-                let ident = &variant.ident;
-                let ident = quote!{
-                    ::core::stringify!(#ty::#ident)
-                };
-                let variant_attr = VariantAttribute::parse_from_variant(variant)?;
-                let span = variant.span();
-                let lhs = quote_match_variant_lhs(ty, variant);
-                let rhs = match (arg, &variant_attr) {
-                    (Arg::Explicit { status_code, .. }, Some(VariantAttribute::From { ident: sident, .. } | VariantAttribute::Source { ident: sident, .. })) => {
-                        quote_spanned! {span=>::core::write!(f, "http error {}: {}: {}", #status_code, #ident, #sident)}
-                    },
-                    (Arg::Explicit { status_code, .. }, _) => {
-                        quote_spanned! {span=>::core::write!(f, "http error {}: {}", #status_code, #ident)}
-                    },
-                    (Arg::Transparent, Some(VariantAttribute::From { ident: sident, .. } | VariantAttribute::Source { ident: sident, .. })) => {
-                        quote_spanned! {span=>#sident.fmt(f)}
-                    },
-                    (Arg::Transparent, None) => {
-                        return Err(spanned_err!(
-                            variant,
-                            "`transparent` requires either `#[from]` or `#[source]`"
-                        ));
-                    }
-                };
-                Ok(quote_spanned! {span=>#lhs => #rhs,})
-            },
-        )
+        .map(|(variant, arg)| {
+            let ident = &variant.ident;
+            let ident = quote! {
+                ::core::stringify!(#ty::#ident)
+            };
+            let variant_attr = VariantAttribute::parse_from_variant(variant)?;
+            let span = variant.span();
+            let lhs = quote_match_variant_lhs(ty, variant);
+            let rhs = match (arg, &variant_attr) {
+                (
+                    Arg::Explicit { .. },
+                    Some(
+                        VariantAttribute::From { ident: sident, .. }
+                        | VariantAttribute::Source { ident: sident, .. },
+                    ),
+                ) => {
+                    quote_spanned! {span=>::core::write!(f, "{}: {}", #ident, #sident)}
+                }
+                (Arg::Explicit { .. }, _) => {
+                    quote_spanned! {span=>::core::write!(f, "{}", #ident)}
+                }
+                (
+                    Arg::Transparent,
+                    Some(
+                        VariantAttribute::From { ident: sident, .. }
+                        | VariantAttribute::Source { ident: sident, .. },
+                    ),
+                ) => {
+                    quote_spanned! {span=>#sident.fmt(f)}
+                }
+                (Arg::Transparent, None) => {
+                    return Err(spanned_err!(
+                        variant,
+                        "`transparent` requires either `#[from]` or `#[source]`"
+                    ));
+                }
+            };
+            Ok(quote_spanned! {span=>#lhs => #rhs,})
+        })
         .collect::<syn::Result<Vec<_>>>()?;
 
     Ok(quote! {
@@ -192,6 +211,7 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Re
                     quote_spanned! {span=>
                         ::anyhow_http::HttpError::default()
                             #builder_args
+                            .with_source_err(_fallback_src)
                     }
                 }
                 (
@@ -220,6 +240,7 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Re
         #[allow(fallible_impl_from, clippy::useless_format)]
         impl ::std::convert::From<#ty> for ::anyhow_http::HttpError {
             fn from(e: #ty) -> Self {
+                let _fallback_src = e.as_error();
                 match e {
                     #(#variants)*
                 }
@@ -366,6 +387,10 @@ impl Arg {
                     let ident = p.path.get_ident().unwrap();
                     data.insert(ident.to_string(), DataArg::parse_from_lit(&l.lit));
                 }
+                (Expr::Path(p), r) => {
+                    let ident = p.path.get_ident().unwrap();
+                    data.insert(ident.to_string(), DataArg::Expr(r.clone()));
+                }
                 _ => Err(spanned_err!(arg, "invalid data argument"))?,
             }
         }
@@ -389,6 +414,7 @@ fn parse_format_string(lit: &LitStr) -> String {
 enum DataArg {
     Format(String),
     Lit(Lit),
+    Expr(Expr),
 }
 
 impl DataArg {
@@ -408,6 +434,7 @@ impl ToTokens for DataArg {
         match self {
             DataArg::Format(f) => quote! {::std::format!(#f)}.to_tokens(tokens),
             DataArg::Lit(l) => l.to_tokens(tokens),
+            DataArg::Expr(e) => e.to_tokens(tokens),
         }
     }
 }

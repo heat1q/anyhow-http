@@ -19,6 +19,14 @@ enum CustomError {
     UnamedWithSource(u64, #[source] anyhow::Error),
     #[http_error(transparent)]
     Transparent(#[source] HttpError),
+    #[http_error(status(404), data(code = ErrorCode::Invalid as u32))]
+    ExprData(String),
+}
+
+#[derive(Debug)]
+#[repr(u32)]
+enum ErrorCode {
+    Invalid = 1234,
 }
 
 #[test]
@@ -65,4 +73,17 @@ fn derive_enum_transparent() {
     assert_eq!(err.status_code(), 400);
     assert_eq!(err.reason(), Some("bad request".into()));
     assert!(err.source().is_none());
+}
+
+#[test]
+fn derive_enum_expr_data() {
+    let err: HttpError = CustomError::ExprData("expr data".into()).into();
+
+    assert_eq!(err.status_code(), 404);
+    assert_eq!(err.get("code"), Some(1234));
+    assert_eq!(err.reason(), None);
+    assert_eq!(
+        err.source().map(ToString::to_string),
+        Some("CustomError :: ExprData".into())
+    );
 }

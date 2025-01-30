@@ -42,7 +42,8 @@ mod http_error;
 /// ```
 ///
 /// Supported arguments to the `#[http_error(..)]` attribute are `status`, `reason` and `data`.
-/// `data` allows to set one or more key-value pairs to the [`HttpError`]'s data.
+/// `data` allows to set one or more key-value pairs to the [`HttpError`]'s data. Values may
+/// be literals and any valid expressions.
 /// ```
 /// # use anyhow_http_derive::FromHttpError;
 /// #[derive(FromHttpError)]
