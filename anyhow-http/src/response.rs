@@ -31,12 +31,14 @@ where
 #[cfg_attr(docsrs, doc(cfg(feature = "axum")))]
 impl<F: FormatResponse> axum::response::IntoResponse for HttpErrorResponse<F> {
     fn into_response(self) -> axum::response::Response {
+        let mut headers = self.http_error.headers.clone().unwrap_or_default();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_str(F::content_type().as_ref()).unwrap(),
+        );
         let mut resp = (
             self.http_error.status_code,
-            [(
-                http::header::CONTENT_TYPE,
-                http::HeaderValue::from_str(F::content_type().as_ref()).unwrap(),
-            )],
+            headers,
             F::format_response(&self.http_error),
         )
             .into_response();
@@ -120,9 +122,16 @@ mod tests {
     #[cfg(all(feature = "axum", feature = "json"))]
     fn http_error_resonse_axum_into_response() {
         use axum::response::IntoResponse;
-        let resp: HttpErrorResponse<Json> = http_error!(BAD_REQUEST).into();
+        let resp: HttpErrorResponse<Json> = HttpError::from_status_code(StatusCode::BAD_REQUEST)
+            .with_header("x-custom-header", 42.into())
+            .into();
         let resp = resp.into_response();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            resp.headers().get("content-type"),
+            Some(&"application/json".parse().unwrap())
+        );
+        assert_eq!(resp.headers().get("x-custom-header"), Some(&42.into()));
     }
 
     #[test]

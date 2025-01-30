@@ -1,11 +1,12 @@
 use anyhow::anyhow;
 use core::fmt;
+use http::header::IntoHeaderName;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::error::Error as StdError;
 use std::{borrow::Cow, collections::HashMap};
 
-use http::StatusCode;
+use http::{HeaderMap, HeaderValue, StatusCode};
 
 /// [`HttpError`] is an error that encapsulates data to generate Http error responses.
 pub struct HttpError {
@@ -13,16 +14,18 @@ pub struct HttpError {
     pub(crate) reason: Option<Cow<'static, str>>,
     pub(crate) source: Option<anyhow::Error>,
     pub(crate) data: Option<HashMap<String, serde_json::Value>>,
+    pub(crate) headers: Option<HeaderMap>,
 }
 
 impl fmt::Debug for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "HttpError\nStatus: {status_code}\nReason: {reason:?}\nData: {data:?}\n\nSource: {source:?}",
+            "HttpError\nStatus: {status_code}\nReason: {reason:?}\nData: {data:?}\nHeaders: {headers:?}\n\nSource: {source:?}",
             status_code = self.status_code,
             reason = self.reason,
             data = self.data,
+            headers = self.headers,
             source = self.source
         )
     }
@@ -76,6 +79,7 @@ impl HttpError {
             reason: None,
             source: None,
             data: None,
+            headers: None,
         }
     }
 
@@ -94,6 +98,7 @@ impl HttpError {
             reason: Some(Cow::Borrowed(reason)),
             source: None,
             data: None,
+            headers: None,
         }
     }
 
@@ -191,6 +196,16 @@ impl HttpError {
         self
     }
 
+    pub fn with_header<K>(mut self, header_key: K, header_value: HeaderValue) -> Self
+    where
+        K: IntoHeaderName,
+    {
+        self.headers
+            .get_or_insert_with(HeaderMap::new)
+            .insert(header_key, header_value);
+        self
+    }
+
     /// Retrieves a key-pair value from the inner data.
     pub fn get<V>(&self, key: impl AsRef<str>) -> Option<V>
     where
@@ -215,6 +230,11 @@ impl HttpError {
     /// Returns the source error if any.
     pub fn source(&self) -> Option<&anyhow::Error> {
         self.source.as_ref()
+    }
+
+    /// Returns the error response headers if any.
+    pub fn headers(&self) -> Option<&HeaderMap> {
+        self.headers.as_ref()
     }
 
     /// Creates a [`HttpError`] from a generic error. It attempts to downcast to an underlying
@@ -407,6 +427,22 @@ mod tests {
             .unwrap();
         assert_eq!(e.get::<i32>("key1"), Some(1234));
         assert_eq!(e.get::<i32>("key2"), Some(5678));
+    }
+
+    #[test]
+    fn http_error_with_headers() {
+        let e: HttpError = HttpError::default()
+            .with_header(
+                http::header::CONTENT_TYPE,
+                "application/json".parse().unwrap(),
+            )
+            .with_header("x-custom-header", "42".parse().unwrap());
+        let hdrs = e.headers().unwrap();
+        assert_eq!(
+            hdrs.get(http::header::CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
+        assert_eq!(hdrs.get("x-custom-header").unwrap(), "42");
     }
 
     #[test]
