@@ -4,7 +4,7 @@ description = "Derive macros for HTTP errors"
 documentation = "https://docs.rs/anyhow-http"
 repository = "https://github.com/heat1q/anyhow-http"
 license = "MIT"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2021"
 keywords = ["error", "http"]
 

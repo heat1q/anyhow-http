@@ -6,7 +6,7 @@ use proc_macro2::{self, TokenStream};
 use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::{
     parenthesized, parse::ParseBuffer, punctuated::Punctuated, spanned::Spanned, Expr, ExprAssign,
-    Field, Fields, Ident, Item, ItemEnum, ItemStruct, Lit, LitInt, LitStr, Token, Variant,
+    Field, Fields, Ident, Item, ItemEnum, ItemStruct, Lit, LitInt, LitStr, Stmt, Token, Variant,
 };
 
 const FORMAT_FIELD_PREFIX: &str = "__f_";
@@ -292,7 +292,7 @@ enum Arg {
     Explicit {
         status_code: LitInt,
         reason: Option<String>,
-        data: Option<HashMap<String, DataArg>>,
+        data: Option<HashMap<DataKey, DataArg>>,
     },
     Transparent,
 }
@@ -377,22 +377,33 @@ impl Arg {
         Ok(parse_format_string(&reason))
     }
 
-    fn parse_data(buf: &ParseBuffer) -> syn::Result<HashMap<String, DataArg>> {
-        let mut data: HashMap<String, DataArg> = Default::default();
+    fn parse_data(buf: &ParseBuffer) -> syn::Result<HashMap<DataKey, DataArg>> {
+        let mut data: HashMap<DataKey, DataArg> = Default::default();
         let args: Punctuated<ExprAssign, Token![,]> = Punctuated::parse_terminated(buf)?;
 
         for arg in &args {
-            match (arg.left.as_ref(), arg.right.as_ref()) {
-                (Expr::Path(p), Expr::Lit(l)) => {
-                    let ident = p.path.get_ident().unwrap();
-                    data.insert(ident.to_string(), DataArg::parse_from_lit(&l.lit));
+            let key = match arg.left.as_ref() {
+                Expr::Path(p) => {
+                    let lit = p.path.get_ident().unwrap().to_string();
+                    DataKey::Lit(lit)
                 }
-                (Expr::Path(p), r) => {
-                    let ident = p.path.get_ident().unwrap();
-                    data.insert(ident.to_string(), DataArg::Expr(r.clone()));
+                Expr::Block(b) if b.block.stmts.len() == 1 => {
+                    let stmt = b.block.stmts.first().unwrap();
+                    if let Stmt::Expr(expr, None) = stmt {
+                        DataKey::Expr(expr.clone())
+                    } else {
+                        Err(spanned_err!(arg, "invalid data expression argument"))?
+                    }
                 }
                 _ => Err(spanned_err!(arg, "invalid data argument"))?,
-            }
+            };
+
+            let arg = match arg.right.as_ref() {
+                Expr::Lit(l) => DataArg::parse_from_lit(&l.lit),
+                r => DataArg::Expr(r.clone()),
+            };
+
+            data.insert(key, arg);
         }
 
         Ok(data)
@@ -408,6 +419,21 @@ fn parse_format_string(lit: &LitStr) -> String {
         }
     }
     format
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+enum DataKey {
+    Lit(String),
+    Expr(Expr),
+}
+
+impl ToTokens for DataKey {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            DataKey::Lit(lit) => lit.to_tokens(tokens),
+            DataKey::Expr(expr) => expr.to_tokens(tokens),
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -1,6 +1,8 @@
 use anyhow_http::{http_error, HttpError};
 use anyhow_http_derive::FromHttpError;
 
+const DATA_KEY: &str = "key";
+
 #[derive(Debug, FromHttpError)]
 enum CustomError {
     #[http_error(status(400), reason("reason {0}"))]
@@ -19,7 +21,7 @@ enum CustomError {
     UnamedWithSource(u64, #[source] anyhow::Error),
     #[http_error(transparent)]
     Transparent(#[source] HttpError),
-    #[http_error(status(404), data(code = ErrorCode::Invalid as u32))]
+    #[http_error(status(404), data({DATA_KEY} = ErrorCode::Invalid as u32))]
     ExprData(String),
 }
 
@@ -80,7 +82,7 @@ fn derive_enum_expr_data() {
     let err: HttpError = CustomError::ExprData("expr data".into()).into();
 
     assert_eq!(err.status_code(), 404);
-    assert_eq!(err.get("code"), Some(1234));
+    assert_eq!(err.get(DATA_KEY), Some(1234));
     assert_eq!(err.reason(), None);
     assert_eq!(
         err.source().map(ToString::to_string),
