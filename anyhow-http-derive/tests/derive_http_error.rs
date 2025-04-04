@@ -20,7 +20,7 @@ enum CustomError {
     )]
     UnamedWithSource(u64, #[source] anyhow::Error),
     #[http_error(transparent)]
-    Transparent(#[source] HttpError),
+    Transparent(#[source] anyhow::Error),
     #[http_error(status(404), data({DATA_KEY} = ErrorCode::Invalid as u32))]
     ExprData(String),
 }

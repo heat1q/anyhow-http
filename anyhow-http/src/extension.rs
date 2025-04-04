@@ -13,15 +13,15 @@ pub trait ResultExt {
     /// # Example
     ///
     /// ```
-    /// use http::StatusCode;
-    /// use anyhow_http::{http_error, HttpError, ResultExt};
+    /// # use http::StatusCode;
+    /// # use anyhow_http::{http_error, HttpError, ResultExt};
     ///
-    /// let s: Result<i32, HttpError> = "nan"
-    ///     .parse::<i32>()
-    ///     .map_status(StatusCode::BAD_REQUEST);
-    /// assert_eq!(s, Err(http_error!(BAD_REQUEST)));
+    /// let err = "nan".parse::<i32>()
+    ///     .map_status(StatusCode::BAD_REQUEST)
+    ///     .unwrap_err();
+    /// assert_eq!(HttpError::from(err).status_code(), StatusCode::BAD_REQUEST);
     /// ```
-    fn map_status(self, status_code: StatusCode) -> StdResult<Self::Item, HttpError>;
+    fn map_status(self, status_code: StatusCode) -> anyhow::Result<Self::Item>;
 
     /// Maps a `Result<T, E>` to `Result<T, HttpError<R>>` by creating a [`HttpError`] with the
     /// specified status code and reason wrapping the error contained [`Err`].
@@ -29,19 +29,17 @@ pub trait ResultExt {
     /// # Example
     ///
     /// ```
-    /// use http::StatusCode;
-    /// use anyhow_http::{http_error, HttpError, ResultExt};
+    /// # use http::StatusCode;
+    /// # use anyhow_http::{http_error, HttpError, ResultExt};
     ///
-    /// let s: Result<i32, HttpError> = "nan"
-    ///     .parse::<i32>()
-    ///     .map_http_error(StatusCode::BAD_REQUEST, "invalid number");
-    /// assert_eq!(s, Err(http_error!(BAD_REQUEST, "invalid number")));
+    /// let err = "nan".parse::<i32>()
+    ///     .map_http_error(StatusCode::BAD_REQUEST, "invalid number")
+    ///     .unwrap_err();
+    /// let http_err = HttpError::from(err);
+    /// assert_eq!(http_err.status_code(), StatusCode::BAD_REQUEST);
+    /// assert_eq!(http_err.reason().unwrap(), "invalid number");
     /// ```
-    fn map_http_error<S>(
-        self,
-        status_code: StatusCode,
-        reason: S,
-    ) -> StdResult<Self::Item, HttpError>
+    fn map_http_error<S>(self, status_code: StatusCode, reason: S) -> anyhow::Result<Self::Item>
     where
         S: Into<Cow<'static, str>>;
 }
@@ -52,18 +50,14 @@ where
 {
     type Item = T;
 
-    fn map_status(self, status_code: StatusCode) -> StdResult<T, HttpError> {
+    fn map_status(self, status_code: StatusCode) -> anyhow::Result<T> {
         match self {
             Ok(v) => Ok(v),
-            Err(e) => Err(HttpError::from_err(e).with_status_code(status_code)),
+            Err(e) => Err(HttpError::from_err(e).with_status_code(status_code).into()),
         }
     }
 
-    fn map_http_error<S>(
-        self,
-        status_code: StatusCode,
-        reason: S,
-    ) -> StdResult<Self::Item, HttpError>
+    fn map_http_error<S>(self, status_code: StatusCode, reason: S) -> anyhow::Result<Self::Item>
     where
         S: Into<Cow<'static, str>>,
     {
@@ -71,7 +65,8 @@ where
             Ok(v) => Ok(v),
             Err(e) => Err(HttpError::from_err(e)
                 .with_status_code(status_code)
-                .with_reason(reason.into())),
+                .with_reason(reason.into())
+                .into()),
         }
     }
 }
@@ -86,22 +81,22 @@ pub trait OptionExt {
     /// # Examples
     ///
     /// ```
-    /// use http::StatusCode;
-    /// use anyhow_http::{http_error, HttpError, OptionExt};
+    /// # use http::StatusCode;
+    /// # use anyhow_http::{http_error, HttpError, OptionExt};
     ///
-    /// let x: Result<_, HttpError> = None::<()>.ok_or_status(StatusCode::BAD_REQUEST);
-    /// assert_eq!(x, Err(http_error!(BAD_REQUEST)));
+    /// let err = None::<()>.ok_or_status(StatusCode::BAD_REQUEST).unwrap_err();
+    /// assert_eq!(HttpError::from(err).status_code(), StatusCode::BAD_REQUEST);
     /// ```
-    fn ok_or_status(self, status_code: StatusCode) -> StdResult<Self::Item, HttpError>;
+    fn ok_or_status(self, status_code: StatusCode) -> anyhow::Result<Self::Item>;
 }
 
 impl<T> OptionExt for std::option::Option<T> {
     type Item = T;
 
-    fn ok_or_status(self, status_code: StatusCode) -> StdResult<T, HttpError> {
+    fn ok_or_status(self, status_code: StatusCode) -> anyhow::Result<T> {
         match self {
             Some(v) => Ok(v),
-            None => Err(HttpError::from_status_code(status_code)),
+            None => Err(HttpError::from_status_code(status_code).into()),
         }
     }
 }
@@ -115,23 +110,27 @@ mod tests {
     #[test]
     fn http_err_ext_result_map_status() {
         let result: StdResult<(), _> = Err(anyhow!("error"));
-        let http_result: StdResult<_, HttpError> = result.map_status(StatusCode::BAD_REQUEST);
+        let http_result = result.map_status(StatusCode::BAD_REQUEST);
 
         let Err(e) = http_result else { unreachable!() };
+        let e: HttpError = e.into();
         assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
         assert_eq!(e.source.unwrap().to_string(), "error".to_owned());
     }
 
     #[test]
     fn http_err_ext_result_map_http_error() {
-        let s: StdResult<i32, HttpError> = "nan".parse::<i32>().map_status(StatusCode::BAD_REQUEST);
-        assert_eq!(s, Err(HttpError::from_status_code(StatusCode::BAD_REQUEST)));
+        let s = "nan".parse::<i32>().map_status(StatusCode::BAD_REQUEST);
+        let Err(e) = s else { unreachable!() };
+        let e: HttpError = e.into();
+        assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
 
-        let result: StdResult<(), _> = Err(anyhow!("error"));
-        let http_result: StdResult<_, HttpError> =
+        let result = Err(anyhow!("error"));
+        let http_result: anyhow::Result<()> =
             result.map_http_error(StatusCode::BAD_REQUEST, "invalid request");
 
         let Err(e) = http_result else { unreachable!() };
+        let e: HttpError = e.into();
         assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
         assert_eq!(e.source.unwrap().to_string(), "error".to_owned());
         assert_eq!(e.reason, Some("invalid request".into()));
@@ -140,9 +139,10 @@ mod tests {
     #[test]
     fn http_err_ext_option() {
         let opt: Option<()> = None;
-        let http_result: StdResult<_, HttpError> = opt.ok_or_status(StatusCode::BAD_REQUEST);
+        let http_result = opt.ok_or_status(StatusCode::BAD_REQUEST);
 
         let Err(e) = http_result else { unreachable!() };
+        let e: HttpError = e.into();
         assert_eq!(e.status_code, StatusCode::BAD_REQUEST);
         assert!(e.source.is_none());
     }

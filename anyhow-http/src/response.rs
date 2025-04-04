@@ -10,7 +10,7 @@ pub type HttpResult<T, F> = core::result::Result<T, HttpErrorResponse<F>>;
 /// Type representing an error response.
 #[derive(Debug)]
 pub struct HttpErrorResponse<F: FormatResponse> {
-    pub http_error: HttpError,
+    pub http_error: Box<HttpError>,
     _formatter: PhantomData<F>,
 }
 
@@ -21,7 +21,7 @@ where
 {
     fn from(e: E) -> Self {
         Self {
-            http_error: HttpError::from_err(e),
+            http_error: Box::new(HttpError::from_err(e)),
             _formatter: PhantomData,
         }
     }
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     #[cfg(feature = "json")]
     fn http_error_json_response() {
-        let e: HttpError = http_error!(BAD_REQUEST, "invalid param",);
+        let e: HttpError = http_error!(BAD_REQUEST, "invalid param",).into();
         let e = e.with_key_value("ctx", "some context");
         let e = e.with_key_value("code", 1234);
         let body = Json::format_response(&e);
@@ -155,7 +155,7 @@ mod tests {
     #[cfg(feature = "json")]
     fn http_error_response_from_anyhow_downcast() {
         let res: HttpResult<(), Json> = (|| {
-            let e: anyhow::Error = http_error!(BAD_REQUEST).into();
+            let e = http_error!(BAD_REQUEST);
             Err(e)?;
             unreachable!()
         })();
