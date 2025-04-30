@@ -66,7 +66,7 @@ fn impl_block(ty: &Ident, _variant_args: &[(&Variant, Arg)]) -> syn::Result<Toke
     Ok(quote! {
         impl #ty {
             fn as_error(&self) -> ::anyhow::Error {
-                ::anyhow::anyhow!("{}", self)
+                ::anyhow::anyhow!("{}::{:?}", ::core::stringify!(#ty), self)
             }
         }
     })

@@ -33,18 +33,31 @@ impl fmt::Debug for HttpError {
 
 impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.reason, &self.source) {
-            (None, None) => write!(f, "HttpError({})", self.status_code),
-            (Some(r), None) => write!(f, "HttpError({}): {r}", self.status_code),
-            (None, Some(s)) if f.alternate() => {
-                write!(f, "HttpError({}): source: {s:#}", self.status_code)
+        write!(f, "HttpError({})", self.status_code)?;
+
+        if f.alternate() {
+            if let Some(reason) = &self.reason {
+                write!(f, "\nReason: {reason}")?;
             }
-            (None, Some(s)) => write!(f, "HttpError({}): source: {s}", self.status_code),
-            (Some(r), Some(s)) if f.alternate() => {
-                write!(f, "HttpError({}): {r}, source: {s:#}", self.status_code)
+            if let Some(data) = &self.data {
+                write!(f, "\nData: {data:?}")?;
             }
-            (Some(r), Some(s)) => write!(f, "HttpError({}): {r}, source: {s}", self.status_code),
+            if let Some(headers) = &self.headers {
+                write!(f, "\nHeaders: {headers:?}")?;
+            }
+            if let Some(source) = &self.source {
+                write!(f, "\n\nSource: {source}")?;
+            }
+        } else {
+            if let Some(reason) = &self.reason {
+                write!(f, ", reason: {reason}")?;
+            }
+            if let Some(source) = &self.source {
+                write!(f, ", source: {source}")?;
+            }
         }
+
+        Ok(())
     }
 }
 
@@ -266,7 +279,10 @@ impl From<anyhow::Error> for HttpError {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use anyhow::anyhow;
+    use bytes::Bytes;
 
     use super::*;
 
@@ -294,6 +310,19 @@ mod tests {
             e.to_string(),
             "HttpError(500 Internal Server Error): reason, source: error"
         );
+    }
+
+    #[test]
+    fn http_error_print() {
+        let source = anyhow!("ClientConnect");
+        let e: anyhow::Error = HttpError::default()
+            .with_reason("reason")
+            .with_source_err(source)
+            .into();
+
+        let mut buf: Vec<u8> = vec![];
+        write!(buf, "{e:?}");
+        assert_eq!(String::from_utf8(buf).unwrap(), "");
     }
 
     #[test]
