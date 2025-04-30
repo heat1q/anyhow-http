@@ -217,6 +217,19 @@ impl HttpError {
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 
+    /// Sets a key-pair value pair into the inner data.
+    pub fn set<K, V>(&mut self, key: K, value: V) -> serde_json::Result<()>
+    where
+        K: Into<String>,
+        V: Serialize + Sync + Send + 'static,
+    {
+        let value = serde_json::to_value(value)?;
+        self.data
+            .get_or_insert_with(HashMap::new)
+            .insert(key.into(), value);
+        Ok(())
+    }
+
     /// Returns the status code.
     pub fn status_code(&self) -> StatusCode {
         self.status_code
@@ -427,6 +440,13 @@ mod tests {
             .unwrap();
         assert_eq!(e.get::<i32>("key1"), Some(1234));
         assert_eq!(e.get::<i32>("key2"), Some(5678));
+    }
+
+    #[test]
+    fn http_error_set() {
+        let mut e: HttpError = HttpError::default();
+        e.set("key1", 1234).unwrap();
+        assert_eq!(e.get::<i32>("key1"), Some(1234));
     }
 
     #[test]
