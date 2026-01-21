@@ -86,6 +86,6 @@ fn derive_enum_expr_data() {
     assert_eq!(err.reason(), None);
     assert_eq!(
         err.source().map(ToString::to_string),
-        Some("CustomError :: ExprData".into())
+        Some("CustomError::ExprData".into())
     );
 }

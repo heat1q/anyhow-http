@@ -78,7 +78,7 @@ fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Tok
         .map(|(variant, arg)| {
             let ident = &variant.ident;
             let ident = quote! {
-                ::core::stringify!(#ty::#ident)
+                ::core::concat!(::core::stringify!(#ty), "::", ::core::stringify!(#ident))
             };
             let variant_attr = VariantAttribute::parse_from_variant(variant)?;
             let span = variant.span();
