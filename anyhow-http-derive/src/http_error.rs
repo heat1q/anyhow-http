@@ -69,7 +69,13 @@ fn impl_block(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Token
             let variant_attr = VariantAttribute::parse_from_variant(variant)?;
             let span = variant.span();
             let lhs = quote_match_variant_lhs(ty, variant, false);
-            
+
+            let source_ident = variant_attr.as_ref().map(|attr| match attr {
+                VariantAttribute::From { ident, .. }
+                | VariantAttribute::Source { ident, .. } => ident,
+            });
+            let err_cx = quote_error_context(ty, variant, source_ident);
+
             let rhs = match (arg, &variant_attr) {
                 (
                     Arg::Explicit { .. },
@@ -78,13 +84,16 @@ fn impl_block(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Token
                         | VariantAttribute::Source { ident: sident, .. },
                     ),
                 ) => {
-                    quote_spanned! {span=>::core::result::Result::<(), _>::Err(#sident).context(_err_cx).unwrap_err()}
+                    quote_spanned! {span=> {
+                        let _err_cx = #err_cx;
+                        ::core::result::Result::<(), _>::Err(#sident).context(_err_cx).unwrap_err()
+                    }}
                 }
-                (
-                    Arg::Explicit { .. },
-                    None,
-                ) => {
-                    quote_spanned! {span=>::anyhow::anyhow!(_err_cx)}
+                (Arg::Explicit { .. }, None) => {
+                    quote_spanned! {span=> {
+                        let _err_cx = #err_cx;
+                        ::anyhow::anyhow!(_err_cx)
+                    }}
                 }
                 (
                     Arg::Transparent,
@@ -111,13 +120,82 @@ fn impl_block(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Token
             #[allow(clippy::useless_conversion)]
             fn into_error(self) -> ::anyhow::Error {
                 use ::anyhow::Context;
-                let _err_cx = ::std::format!(::core::concat!(::core::stringify!(#ty), "::", "{:?}"), self);
                 match self {
                     #(#variants)*
                 }
             }
         }
     })
+}
+
+fn quote_error_context(
+    ty: &Ident,
+    variant: &Variant,
+    source_ident: Option<&Ident>,
+) -> TokenStream {
+    let variant_ident = &variant.ident;
+    let prefix = quote! {
+        ::core::concat!(::core::stringify!(#ty), "::", ::core::stringify!(#variant_ident))
+    };
+    match &variant.fields {
+        syn::Fields::Named(fields) => {
+            let non_source: Vec<_> = fields
+                .named
+                .iter()
+                .filter_map(|f| {
+                    let name = f.ident.as_ref()?;
+                    let bound = format_field_ident!(name);
+                    if source_ident.map_or(false, |s| *s == bound) {
+                        return None;
+                    }
+                    Some((name.to_string(), bound))
+                })
+                .collect();
+            if non_source.is_empty() {
+                quote! { #prefix.to_string() }
+            } else {
+                let fmt_str = format!(
+                    " {{{{ {} }}}}",
+                    non_source
+                        .iter()
+                        .map(|(name, _)| format!("{name}: {{:?}}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                let field_values: Vec<_> =
+                    non_source.iter().map(|(_, bound)| bound).collect();
+                quote! {
+                    ::std::format!(::core::concat!(#prefix, #fmt_str), #(#field_values),*)
+                }
+            }
+        }
+        syn::Fields::Unnamed(fields) => {
+            let non_source: Vec<_> = fields
+                .unnamed
+                .iter()
+                .enumerate()
+                .filter_map(|(i, _)| {
+                    let bound = format_field_ident!(i);
+                    if source_ident.map_or(false, |s| *s == bound) {
+                        return None;
+                    }
+                    Some(bound)
+                })
+                .collect();
+            if non_source.is_empty() {
+                quote! { #prefix.to_string() }
+            } else {
+                let fmt_str =
+                    format!("({})", vec!["{:?}"; non_source.len()].join(", "));
+                quote! {
+                    ::std::format!(::core::concat!(#prefix, #fmt_str), #(#non_source),*)
+                }
+            }
+        }
+        syn::Fields::Unit => {
+            quote! { #prefix.to_string() }
+        }
+    }
 }
 
 fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {

@@ -41,7 +41,10 @@ fn derive_enum_from() {
 
     assert_eq!(err.status_code(), 400);
     assert_eq!(err.reason(), Some("reason source".into()));
-    assert_eq!(err.source().map(ToString::to_string), Some("source".into()));
+    assert_eq!(
+        err.source().map(ToString::to_string),
+        Some("CustomError::From".into())
+    );
 }
 
 #[test]
@@ -56,11 +59,14 @@ fn derive_enum_named_with_source() {
 
     assert_eq!(err.status_code(), 400);
     assert_eq!(err.reason(), Some("reason 1234".into()));
-    //assert_eq!(
-    //    err.source().map(ToString::to_string),
-    //    Some("CustomError::NamedWithSource { count: 1234, source: source }".into())
-    //);
-    assert_eq!(format!("{err:#}"), "");
+    assert_eq!(
+        err.source().map(ToString::to_string),
+        Some("CustomError::NamedWithSource { count: 1234 }".into())
+    );
+    assert_eq!(
+        format!("{err:#}"),
+        "HttpError(400) reason 1234: CustomError::NamedWithSource { count: 1234 }: outer: source"
+    );
 }
 
 #[test]
@@ -73,7 +79,7 @@ fn derive_enum_unnamed_with_source() {
     assert_eq!(err.get("info"), Some("info 1234".to_string()));
     assert_eq!(
         err.source().map(ToString::to_string),
-        Some("CustomError::UnamedWithSource(1234, source)".into())
+        Some("CustomError::UnamedWithSource(1234)".into())
     );
 }
 
@@ -95,6 +101,6 @@ fn derive_enum_expr_data() {
     assert_eq!(err.reason(), Some("reason expr data".into()));
     assert_eq!(
         err.source().map(ToString::to_string),
-        Some("CustomError::ExprData(\"expr data\")".into())
+        Some("CustomError::ExprData(\"expr data\")".into()),
     );
 }
