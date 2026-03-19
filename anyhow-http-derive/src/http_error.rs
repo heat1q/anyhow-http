@@ -71,8 +71,9 @@ fn impl_block(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Token
             let lhs = quote_match_variant_lhs(ty, variant, false);
 
             let source_ident = variant_attr.as_ref().map(|attr| match attr {
-                VariantAttribute::From { ident, .. }
-                | VariantAttribute::Source { ident, .. } => ident,
+                VariantAttribute::From { ident, .. } | VariantAttribute::Source { ident, .. } => {
+                    ident
+                }
             });
             let err_cx = quote_error_context(ty, variant, source_ident);
 
@@ -128,11 +129,7 @@ fn impl_block(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Token
     })
 }
 
-fn quote_error_context(
-    ty: &Ident,
-    variant: &Variant,
-    source_ident: Option<&Ident>,
-) -> TokenStream {
+fn quote_error_context(ty: &Ident, variant: &Variant, source_ident: Option<&Ident>) -> TokenStream {
     let variant_ident = &variant.ident;
     let prefix = quote! {
         ::core::concat!(::core::stringify!(#ty), "::", ::core::stringify!(#variant_ident))
@@ -145,7 +142,7 @@ fn quote_error_context(
                 .filter_map(|f| {
                     let name = f.ident.as_ref()?;
                     let bound = format_field_ident!(name);
-                    if source_ident.map_or(false, |s| *s == bound) {
+                    if source_ident.is_some_and(|s| *s == bound) {
                         return None;
                     }
                     Some((name.to_string(), bound))
@@ -162,8 +159,7 @@ fn quote_error_context(
                         .collect::<Vec<_>>()
                         .join(", ")
                 );
-                let field_values: Vec<_> =
-                    non_source.iter().map(|(_, bound)| bound).collect();
+                let field_values: Vec<_> = non_source.iter().map(|(_, bound)| bound).collect();
                 quote! {
                     ::std::format!(::core::concat!(#prefix, #fmt_str), #(#field_values),*)
                 }
@@ -176,7 +172,7 @@ fn quote_error_context(
                 .enumerate()
                 .filter_map(|(i, _)| {
                     let bound = format_field_ident!(i);
-                    if source_ident.map_or(false, |s| *s == bound) {
+                    if source_ident.is_some_and(|s| *s == bound) {
                         return None;
                     }
                     Some(bound)
@@ -185,8 +181,7 @@ fn quote_error_context(
             if non_source.is_empty() {
                 quote! { #prefix.to_string() }
             } else {
-                let fmt_str =
-                    format!("({})", vec!["{:?}"; non_source.len()].join(", "));
+                let fmt_str = format!("({})", vec!["{:?}"; non_source.len()].join(", "));
                 quote! {
                     ::std::format!(::core::concat!(#prefix, #fmt_str), #(#non_source),*)
                 }
