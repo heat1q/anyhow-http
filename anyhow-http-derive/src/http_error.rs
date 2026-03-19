@@ -62,27 +62,21 @@ fn expand_enum(item: ItemEnum) -> syn::Result<TokenStream> {
     Ok(output)
 }
 
-fn impl_block(ty: &Ident, _variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
-    Ok(quote! {
-        impl #ty {
-            fn as_error(&self) -> ::anyhow::Error {
-                ::anyhow::anyhow!("{}", self)
-            }
-        }
-    })
-}
-
-fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
+fn impl_block(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
     let variants = variant_args
         .iter()
         .map(|(variant, arg)| {
-            let ident = &variant.ident;
-            let ident = quote! {
-                ::core::stringify!(#ty::#ident)
-            };
             let variant_attr = VariantAttribute::parse_from_variant(variant)?;
             let span = variant.span();
-            let lhs = quote_match_variant_lhs(ty, variant);
+            let lhs = quote_match_variant_lhs(ty, variant, false);
+
+            let source_ident = variant_attr.as_ref().map(|attr| match attr {
+                VariantAttribute::From { ident, .. } | VariantAttribute::Source { ident, .. } => {
+                    ident
+                }
+            });
+            let err_cx = quote_error_context(ty, variant, source_ident);
+
             let rhs = match (arg, &variant_attr) {
                 (
                     Arg::Explicit { .. },
@@ -91,10 +85,16 @@ fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Tok
                         | VariantAttribute::Source { ident: sident, .. },
                     ),
                 ) => {
-                    quote_spanned! {span=>::core::write!(f, "{}: {}", #ident, #sident)}
+                    quote_spanned! {span=> {
+                        let _err_cx = #err_cx;
+                        ::core::result::Result::<(), _>::Err(#sident).context(_err_cx).unwrap_err()
+                    }}
                 }
-                (Arg::Explicit { .. }, _) => {
-                    quote_spanned! {span=>::core::write!(f, "{}", #ident)}
+                (Arg::Explicit { .. }, None) => {
+                    quote_spanned! {span=> {
+                        let _err_cx = #err_cx;
+                        ::anyhow::anyhow!(_err_cx)
+                    }}
                 }
                 (
                     Arg::Transparent,
@@ -103,13 +103,13 @@ fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Tok
                         | VariantAttribute::Source { ident: sident, .. },
                     ),
                 ) => {
-                    quote_spanned! {span=>#sident.fmt(f)}
+                    quote_spanned! {span=>::anyhow::Error::from(#sident)}
                 }
                 (Arg::Transparent, None) => {
                     return Err(spanned_err!(
                         variant,
                         "`transparent` requires either `#[from]` or `#[source]`"
-                    ));
+                    ))
                 }
             };
             Ok(quote_spanned! {span=>#lhs => #rhs,})
@@ -117,8 +117,10 @@ fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Tok
         .collect::<syn::Result<Vec<_>>>()?;
 
     Ok(quote! {
-        impl ::std::fmt::Display for #ty {
-            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        impl #ty {
+            #[allow(clippy::useless_conversion)]
+            fn into_error(self) -> ::anyhow::Error {
+                use ::anyhow::Context;
                 match self {
                     #(#variants)*
                 }
@@ -127,7 +129,97 @@ fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<Tok
     })
 }
 
-fn quote_match_variant_lhs(ty: &Ident, variant: &Variant) -> TokenStream {
+fn quote_error_context(ty: &Ident, variant: &Variant, source_ident: Option<&Ident>) -> TokenStream {
+    let variant_ident = &variant.ident;
+    let prefix = quote! {
+        ::core::concat!(::core::stringify!(#ty), "::", ::core::stringify!(#variant_ident))
+    };
+    match &variant.fields {
+        syn::Fields::Named(fields) => {
+            let non_source: Vec<_> = fields
+                .named
+                .iter()
+                .filter_map(|f| {
+                    let name = f.ident.as_ref()?;
+                    let bound = format_field_ident!(name);
+                    if source_ident.is_some_and(|s| *s == bound) {
+                        return None;
+                    }
+                    Some((name.to_string(), bound))
+                })
+                .collect();
+            if non_source.is_empty() {
+                quote! { #prefix.to_string() }
+            } else {
+                let fmt_str = format!(
+                    " {{{{ {} }}}}",
+                    non_source
+                        .iter()
+                        .map(|(name, _)| format!("{name}: {{:?}}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                let field_values: Vec<_> = non_source.iter().map(|(_, bound)| bound).collect();
+                quote! {
+                    ::std::format!(::core::concat!(#prefix, #fmt_str), #(#field_values),*)
+                }
+            }
+        }
+        syn::Fields::Unnamed(fields) => {
+            let non_source: Vec<_> = fields
+                .unnamed
+                .iter()
+                .enumerate()
+                .filter_map(|(i, _)| {
+                    let bound = format_field_ident!(i);
+                    if source_ident.is_some_and(|s| *s == bound) {
+                        return None;
+                    }
+                    Some(bound)
+                })
+                .collect();
+            if non_source.is_empty() {
+                quote! { #prefix.to_string() }
+            } else {
+                let fmt_str = format!("({})", vec!["{:?}"; non_source.len()].join(", "));
+                quote! {
+                    ::std::format!(::core::concat!(#prefix, #fmt_str), #(#non_source),*)
+                }
+            }
+        }
+        syn::Fields::Unit => {
+            quote! { #prefix.to_string() }
+        }
+    }
+}
+
+fn impl_display(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Result<TokenStream> {
+    let variants = variant_args
+        .iter()
+        .map(|(variant, _arg)| {
+            let ident = &variant.ident;
+            let ident = quote! {
+                ::core::concat!(::core::stringify!(#ty), "::", ::core::stringify!(#ident))
+            };
+            let lhs = quote_match_variant_lhs(ty, variant, true);
+            let span = variant.span();
+            let rhs = quote_spanned! {span=>::core::write!(f, "{}", #ident)};
+            Ok(quote_spanned! {span=>#lhs => #rhs,})
+        })
+        .collect::<syn::Result<Vec<_>>>()?;
+
+    Ok(quote! {
+        impl ::std::fmt::Display for #ty {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                match &self {
+                    #(#variants)*
+                }
+            }
+        }
+    })
+}
+
+fn quote_match_variant_lhs(ty: &Ident, variant: &Variant, as_ref: bool) -> TokenStream {
     let ident = &variant.ident;
     let span = variant.span();
     match &variant.fields {
@@ -138,7 +230,11 @@ fn quote_match_variant_lhs(ty: &Ident, variant: &Variant) -> TokenStream {
                 .filter_map(|f| {
                     let lhs = f.ident.as_ref()?;
                     let rhs = format_field_ident!(lhs);
-                    Some(quote! {#lhs: #rhs})
+                    if as_ref {
+                        Some(quote! {#lhs: ref #rhs})
+                    } else {
+                        Some(quote! {#lhs: #rhs})
+                    }
                 })
                 .collect();
             quote_spanned! {span=>#ty::#ident{#(#f,)*}}
@@ -148,7 +244,14 @@ fn quote_match_variant_lhs(ty: &Ident, variant: &Variant) -> TokenStream {
                 .unnamed
                 .iter()
                 .enumerate()
-                .map(|(i, _)| format_field_ident!(i))
+                .map(|(i, _)| {
+                    let id = format_field_ident!(i);
+                    if as_ref {
+                        quote! {ref #id}
+                    } else {
+                        quote! {#id}
+                    }
+                })
                 .collect();
             quote_spanned! {span=>#ty::#ident(#(#f,)*)}
         }
@@ -181,6 +284,7 @@ fn impl_http_error_builder_arg(arg: &Arg) -> TokenStream {
         .with_status_code(#status_code.try_into().unwrap())
         #with_reason
         #with_data
+        .with_source_err(e.into_error())
     }
 }
 
@@ -189,30 +293,16 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Re
         .iter()
         .map(|(variant, arg)| {
             let source_field = VariantAttribute::parse_from_variant(variant)?;
-            let lhs = quote_match_variant_lhs(ty, variant);
             let span = variant.span();
-            let rhs = match (arg, &source_field) {
-                (
-                    args @ Arg::Explicit { .. },
-                    Some(
-                        VariantAttribute::From { ident: sident, .. }
-                        | VariantAttribute::Source { ident: sident, .. },
-                    ),
-                ) => {
+            match (arg, &source_field) {
+                (args @ Arg::Explicit { .. }, _) => {
+                    let lhs = quote_match_variant_lhs(ty, variant, true);
                     let builder_args = impl_http_error_builder_arg(args);
-                    quote_spanned! {span=>
+                    let rhs = quote_spanned! {span=>
                         ::anyhow_http::HttpError::default()
                             #builder_args
-                            .with_source_err(#sident)
-                    }
-                }
-                (args @ Arg::Explicit { .. }, None) => {
-                    let builder_args = impl_http_error_builder_arg(args);
-                    quote_spanned! {span=>
-                        ::anyhow_http::HttpError::default()
-                            #builder_args
-                            .with_source_err(_fallback_src)
-                    }
+                    };
+                    Ok(quote_spanned! {span=>#lhs => #rhs,})
                 }
                 (
                     Arg::Transparent,
@@ -221,18 +311,17 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Re
                         | VariantAttribute::Source { ident: sident, .. },
                     ),
                 ) => {
-                    quote_spanned! {span=>
+                    let lhs = quote_match_variant_lhs(ty, variant, false);
+                    let rhs = quote_spanned! {span=>
                         ::anyhow_http::HttpError::from_err(#sident)
-                    }
+                    };
+                    Ok(quote_spanned! {span=>#lhs => #rhs,})
                 }
-                (Arg::Transparent, None) => {
-                    return Err(spanned_err!(
-                        variant,
-                        "`transparent` requires either `#[from]` or `#[source]`"
-                    ));
-                }
-            };
-            Ok(quote_spanned! {span=>#lhs => #rhs,})
+                (Arg::Transparent, None) => Err(spanned_err!(
+                    variant,
+                    "`transparent` requires either `#[from]` or `#[source]`"
+                )),
+            }
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
@@ -240,7 +329,6 @@ fn impl_from_http_error(ty: &Ident, variant_args: &[(&Variant, Arg)]) -> syn::Re
         #[allow(fallible_impl_from, clippy::useless_format)]
         impl ::std::convert::From<#ty> for ::anyhow_http::HttpError {
             fn from(e: #ty) -> Self {
-                let _fallback_src = e.as_error();
                 match e {
                     #(#variants)*
                 }
@@ -465,6 +553,7 @@ impl ToTokens for DataArg {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 enum VariantAttribute {
     From { ident: Ident, field: Field },

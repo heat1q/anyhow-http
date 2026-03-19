@@ -21,7 +21,7 @@ enum CustomError {
     UnamedWithSource(u64, #[source] anyhow::Error),
     #[http_error(transparent)]
     Transparent(#[source] anyhow::Error),
-    #[http_error(status(404), data({DATA_KEY} = ErrorCode::Invalid as u32))]
+    #[http_error(status(404), reason("reason {0}"), data({DATA_KEY} = ErrorCode::Invalid as u32))]
     ExprData(String),
 }
 
@@ -41,20 +41,32 @@ fn derive_enum_from() {
 
     assert_eq!(err.status_code(), 400);
     assert_eq!(err.reason(), Some("reason source".into()));
-    assert_eq!(err.source().map(ToString::to_string), Some("source".into()));
+    assert_eq!(
+        err.source().map(ToString::to_string),
+        Some("CustomError::From".into())
+    );
 }
 
 #[test]
 fn derive_enum_named_with_source() {
+    let source = anyhow::anyhow!("source");
+    let source = source.context("outer");
     let err: HttpError = CustomError::NamedWithSource {
-        source: anyhow::anyhow!("source"),
+        source,
         count: 1234,
     }
     .into();
 
     assert_eq!(err.status_code(), 400);
     assert_eq!(err.reason(), Some("reason 1234".into()));
-    assert_eq!(err.source().map(ToString::to_string), Some("source".into()));
+    assert_eq!(
+        err.source().map(ToString::to_string),
+        Some("CustomError::NamedWithSource { count: 1234 }".into())
+    );
+    assert_eq!(
+        format!("{err:#}"),
+        "HttpError(400) reason 1234: CustomError::NamedWithSource { count: 1234 }: outer: source"
+    );
 }
 
 #[test]
@@ -65,7 +77,10 @@ fn derive_enum_unnamed_with_source() {
     assert_eq!(err.reason(), Some("reason 1234".into()));
     assert_eq!(err.get("code"), Some(1234));
     assert_eq!(err.get("info"), Some("info 1234".to_string()));
-    assert_eq!(err.source().map(ToString::to_string), Some("source".into()));
+    assert_eq!(
+        err.source().map(ToString::to_string),
+        Some("CustomError::UnamedWithSource(1234)".into())
+    );
 }
 
 #[test]
@@ -83,9 +98,9 @@ fn derive_enum_expr_data() {
 
     assert_eq!(err.status_code(), 404);
     assert_eq!(err.get(DATA_KEY), Some(1234));
-    assert_eq!(err.reason(), None);
+    assert_eq!(err.reason(), Some("reason expr data".into()));
     assert_eq!(
         err.source().map(ToString::to_string),
-        Some("CustomError :: ExprData".into())
+        Some("CustomError::ExprData(\"expr data\")".into()),
     );
 }

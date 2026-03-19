@@ -9,6 +9,7 @@ use std::{borrow::Cow, collections::HashMap};
 use http::{HeaderMap, HeaderValue, StatusCode};
 
 /// [`HttpError`] is an error that encapsulates data to generate Http error responses.
+#[derive(Debug)]
 pub struct HttpError {
     pub(crate) status_code: StatusCode,
     pub(crate) reason: Option<Cow<'static, str>>,
@@ -17,33 +18,21 @@ pub struct HttpError {
     pub(crate) headers: Option<HeaderMap>,
 }
 
-impl fmt::Debug for HttpError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "HttpError\nStatus: {status_code}\nReason: {reason:?}\nData: {data:?}\nHeaders: {headers:?}\n\nSource: {source:?}",
-            status_code = self.status_code,
-            reason = self.reason,
-            data = self.data,
-            headers = self.headers,
-            source = self.source
-        )
-    }
-}
-
 impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match (&self.reason, &self.source) {
-            (None, None) => write!(f, "HttpError({})", self.status_code),
-            (Some(r), None) => write!(f, "HttpError({}): {r}", self.status_code),
-            (None, Some(s)) if f.alternate() => {
-                write!(f, "HttpError({}): source: {s:#}", self.status_code)
+        let status_code = self.status_code().as_u16();
+        if f.alternate() {
+            match (&self.reason, &self.source) {
+                (None, None) => write!(f, "HttpError({status_code})"),
+                (Some(r), None) => write!(f, "HttpError({status_code}) {r}"),
+                (None, Some(s)) => write!(f, "HttpError({status_code}): {s:#}"),
+                (Some(r), Some(s)) => write!(f, "HttpError({status_code}) {r}: {s:#}"),
             }
-            (None, Some(s)) => write!(f, "HttpError({}): source: {s}", self.status_code),
-            (Some(r), Some(s)) if f.alternate() => {
-                write!(f, "HttpError({}): {r}, source: {s:#}", self.status_code)
+        } else {
+            match &self.reason {
+                None => write!(f, "HttpError({status_code})"),
+                Some(r) => write!(f, "HttpError({status_code}) {r}"),
             }
-            (Some(r), Some(s)) => write!(f, "HttpError({}): {r}, source: {s}", self.status_code),
         }
     }
 }
@@ -285,27 +274,33 @@ mod tests {
 
     #[test]
     fn http_error_display() {
-        let e: HttpError = HttpError::default();
-        assert_eq!(e.to_string(), "HttpError(500 Internal Server Error)");
+        let e: anyhow::Error = HttpError::from_status_code(StatusCode::BAD_REQUEST)
+            .with_reason("inner")
+            .with_key_value("key", "value")
+            .with_source_err(anyhow!("raw source"))
+            .into();
+        let e2: anyhow::Error = HttpError::default()
+            .with_reason("outer")
+            .with_source_err(e)
+            .into();
 
-        let e: HttpError = HttpError::default().with_reason("reason");
+        assert_eq!(format!("{e2}"), "HttpError(500) outer");
         assert_eq!(
-            e.to_string(),
-            "HttpError(500 Internal Server Error): reason"
+            format!("{e2:#}"),
+            "HttpError(500) outer: HttpError(400) inner: raw source"
         );
 
-        let e: HttpError = HttpError::default().with_source_err(anyhow!("error"));
-        assert_eq!(
-            e.to_string(),
-            "HttpError(500 Internal Server Error): source: error"
-        );
+        let h: anyhow::Error = HttpError::from_status_code(StatusCode::BAD_REQUEST)
+            .with_reason("inner")
+            .with_key_value("key", "value")
+            .with_source_err(anyhow!("raw source"))
+            .into();
+        let h2 = HttpError::default().with_reason("outer").with_source_err(h);
 
-        let e: HttpError = HttpError::default()
-            .with_reason("reason")
-            .with_source_err(anyhow!("error"));
+        assert_eq!(format!("{h2}"), "HttpError(500) outer");
         assert_eq!(
-            e.to_string(),
-            "HttpError(500 Internal Server Error): reason, source: error"
+            format!("{h2:#}"),
+            "HttpError(500) outer: HttpError(400) inner: raw source"
         );
     }
 
